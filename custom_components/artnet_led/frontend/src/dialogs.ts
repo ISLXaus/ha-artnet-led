@@ -8,6 +8,7 @@ import {
   CHANNEL_SIZES,
   CORRECTIONS,
   footprint,
+  minUniverse,
   uuid,
 } from './model';
 
@@ -92,6 +93,40 @@ const sharedDialogStyles = css`
     font-size: 0.75rem;
     color: var(--secondary-text-color, #727272);
     margin-top: 4px;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 14px;
+    background: var(--secondary-background-color, #f0f0f0);
+    font-size: 0.85rem;
+  }
+  .chip.invalid {
+    background: color-mix(in srgb, var(--error-color, #db4437) 20%, transparent);
+    outline: 1px solid var(--error-color, #db4437);
+  }
+  .chip small {
+    color: var(--secondary-text-color, #727272);
+  }
+  .chip-x {
+    padding: 0 2px;
+    background: none;
+    border: none;
+    font-size: 0.95rem;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--secondary-text-color, #727272);
+  }
+  .chip-x:hover {
+    color: var(--error-color, #db4437);
   }
 `;
 
@@ -335,15 +370,46 @@ export class ArtnetNodeDialog extends LitElement {
   @property() errorText = '';
 
   @state() private _working!: PatchNode;
+  @state() private _newUniverse = '';
 
   willUpdate(changed: Map<string, unknown>) {
     if (changed.has('node')) {
-      this._working = { ...this.node };
+      this._working = { ...this.node, universes: { ...this.node.universes } };
+      this._newUniverse = '';
     }
   }
 
   private _set<K extends keyof PatchNode>(key: K, value: PatchNode[K]) {
     this._working = { ...this._working, [key]: value };
+  }
+
+  private _addUniverse() {
+    const nr = Number(this._newUniverse);
+    const min = minUniverse(this._working.node_type);
+    if (this._newUniverse === '' || !Number.isInteger(nr) || nr < min || nr > 1024) {
+      this.errorText = `Universe must be a whole number between ${min} and 1024`;
+      return;
+    }
+    if (this._working.universes[String(nr)]) {
+      this.errorText = `Universe ${nr} already exists`;
+      return;
+    }
+    this.errorText = '';
+    this._working = {
+      ...this._working,
+      universes: {
+        ...this._working.universes,
+        [String(nr)]: { send_partial_universe: true, output_correction: 'linear', devices: [] },
+      },
+    };
+    this._newUniverse = '';
+  }
+
+  private _removeUniverse(nr: string) {
+    if (this._working.universes[nr]?.devices?.length) return; // only empty ones here
+    const universes = { ...this._working.universes };
+    delete universes[nr];
+    this._working = { ...this._working, universes };
   }
 
   render() {
@@ -439,6 +505,44 @@ export class ArtnetNodeDialog extends LitElement {
               `
             : nothing}
 
+          <label>Universes</label>
+          <div class="chips">
+            ${Object.keys(n.universes)
+              .sort((a, b) => Number(a) - Number(b))
+              .map((nr) => {
+                const count = n.universes[nr]?.devices?.length ?? 0;
+                const invalid = Number(nr) < minUniverse(n.node_type);
+                return html`
+                  <span class="chip ${invalid ? 'invalid' : ''}"
+                    title=${invalid
+                      ? `Universe ${nr} is not allowed for ${n.node_type} — renumber it from the universe bar`
+                      : count
+                        ? `${count} fixture(s) — remove them first to delete this universe`
+                        : `Universe ${nr}`}
+                  >
+                    ${nr}${count ? html` <small>(${count})</small>` : nothing}
+                    ${!count
+                      ? html`<button class="chip-x" @click=${() => this._removeUniverse(nr)}>
+                          ×
+                        </button>`
+                      : nothing}
+                  </span>
+                `;
+              })}
+          </div>
+          <div class="row">
+            <input
+              type="number"
+              min=${minUniverse(n.node_type)}
+              max="1024"
+              placeholder="Universe number (${minUniverse(n.node_type)}-1024)"
+              .value=${this._newUniverse}
+              @input=${(e: Event) => (this._newUniverse = (e.target as HTMLInputElement).value)}
+              @keydown=${(e: KeyboardEvent) => e.key === 'Enter' && this._addUniverse()}
+            />
+            <button @click=${this._addUniverse}>Add universe</button>
+          </div>
+
           ${this.errorText ? html`<div class="error">${this.errorText}</div>` : nothing}
 
           <div class="actions">
@@ -463,6 +567,14 @@ export class ArtnetNodeDialog extends LitElement {
   private _save() {
     if (!this._working.host?.trim()) {
       this.errorText = 'Host is required';
+      return;
+    }
+    const min = minUniverse(this._working.node_type);
+    const bad = Object.keys(this._working.universes).filter((nr) => Number(nr) < min);
+    if (bad.length) {
+      this.errorText =
+        `Universe ${bad.join(', ')} is not allowed for ${this._working.node_type} ` +
+        `(minimum is ${min}). Renumber it from the universe bar or remove it.`;
       return;
     }
     this.dispatchEvent(
