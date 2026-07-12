@@ -34,7 +34,22 @@ The DMX integration for Home Assistant allows you to send DMX values to an [Art-
 8. _DOWNLOAD_
 9. Restart Home Assistant (_Settings_ > _System_ >  _RESTART_)
 
-## Configuration
+## DMX Patch panel (UI configuration)
+
+Since v0.2.0 the integration ships a **DMX Patch** panel in the Home Assistant sidebar (admin users only). It is a visual patch editor that replaces the need for YAML:
+
+* **Nodes**: add Art-Net/sACN/KiNet nodes with all their options (protocol, host, port, max FPS, refresh interval).
+* **Universes**: a 512-channel grid per universe. Click an empty channel to place a fixture, click a fixture to edit or delete it. Channel overlaps are highlighted and rejected on save.
+* **Live apply**: *Save & Apply* takes effect immediately — no Home Assistant restart. Entities keep their identity across saves (unique IDs are derived from `host/universe/channel`, so moving a fixture to another channel creates a new entity).
+* **Live DMX values**: toggle *Live DMX values* on any universe to watch the actual channel values update in real time (10 Hz).
+
+The first *Save & Apply* automatically creates the *DMX Patch* config entry (also available via *Settings → Devices & Services → Add integration → DMX Artnet integration*). The patch itself is stored in `.storage/artnet_led.patch`.
+
+### Coexistence with YAML
+
+Existing YAML configuration keeps working unchanged. YAML-defined nodes appear in the panel read-only (🔒), with live monitoring available. A node (`host:port`) can be owned by either YAML or the panel, not both — the panel will refuse to save a node that is already configured in YAML. To migrate a node from YAML to the UI, remove it from `configuration.yaml`, restart once, then recreate it in the panel (entities keep their history as long as names and channels stay the same).
+
+## Configuration (YAML)
 
 hass-dmx is a community supported Home Assistant integration, if you have any questions you can discuss with the [Home Assistant DMX Community](https://community.home-assistant.io/t/dmx-lighting/2248).
 

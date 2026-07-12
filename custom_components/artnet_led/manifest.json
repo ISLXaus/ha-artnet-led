@@ -8,11 +8,18 @@
     "@jnimmo",
     "@Breina"
   ],
+  "config_flow": true,
+  "dependencies": [
+    "http",
+    "frontend",
+    "websocket_api",
+    "panel_custom"
+  ],
   "documentation": "https://github.com/Breina/ha-artnet-led",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/Breina/ha-artnet-led/issues",
   "requirements": [
     "pyartnet==2.0"
   ],
-  "version": "0.1.23"
+  "version": "0.2.0"
 }

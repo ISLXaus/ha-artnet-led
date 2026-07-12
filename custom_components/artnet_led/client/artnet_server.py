@@ -85,6 +85,13 @@ class ArtNetServer(asyncio.DatagramProtocol):
         self.__hass = hass
         self.__state_update_callback = state_update_callback
         self.__new_node_callback = new_node_callback
+        # Optional hook fired for every inbound ArtDmx packet (used by the DMX monitor).
+        self.dmx_received_callback = None
+
+        self._transport: transports.DatagramTransport | None = None
+        self._endpoint_task: Task | None = None
+        self._poll_task: Task | None = None
+        self._misc_tasks: set[Task] = set()
         self.firmware_version = firmware_version
         self.oem = oem
         self.esta = esta
@@ -210,10 +217,56 @@ class ArtNetServer(asyncio.DatagramProtocol):
         server_event = loop.create_datagram_endpoint(lambda: self, local_addr=('0.0.0.0', ARTNET_PORT))
 
         if self._polling:
-            self.__hass.async_create_background_task(self.start_poll_loop(), "Art-Net polling loop")
+            self._poll_task = self.__hass.async_create_background_task(
+                self.start_poll_loop(), "Art-Net polling loop"
+            )
         log.info("ArtNet server started")
 
-        return self.__hass.async_create_task(server_event)
+        self._endpoint_task = self.__hass.async_create_task(server_event)
+        return self._endpoint_task
+
+    def _track_task(self, task: Task) -> Task:
+        self._misc_tasks.add(task)
+        task.add_done_callback(self._misc_tasks.discard)
+        return task
+
+    async def stop(self):
+        """Stop all background work and close the UDP socket so the port can be rebound."""
+        if self._poll_task:
+            self._poll_task.cancel()
+            self._poll_task = None
+
+        for task in list(self._misc_tasks):
+            task.cancel()
+        if self._misc_tasks:
+            await asyncio.gather(*self._misc_tasks, return_exceptions=True)
+            self._misc_tasks.clear()
+
+        for own_port in self.own_port_addresses.values():
+            if own_port.update_task:
+                own_port.update_task.cancel()
+                own_port.update_task = None
+
+        # Make sure the endpoint finished being created before closing its transport.
+        if self._endpoint_task and not self._endpoint_task.done():
+            try:
+                await self._endpoint_task
+            except Exception:
+                pass
+        self._endpoint_task = None
+
+        if self._transport:
+            self._transport.close()
+            self._transport = None
+            # Give the event loop a beat to process the close, so UDP 6454 can be rebound.
+            await asyncio.sleep(0)
+
+        self.own_port_addresses.clear()
+        self.nodes_by_ip.clear()
+        self.nodes_by_port_address.clear()
+        self.node_change_subscribers.clear()
+
+        log.info("ArtNet server stopped")
 
     async def start_poll_loop(self):
         while True:
@@ -230,7 +283,11 @@ class ArtNetServer(asyncio.DatagramProtocol):
                     sock.setblocking(False)
                     sock.sendto(poll.serialize(), ("255.255.255.255", 0x1936))
 
-                self.__hass.async_create_background_task(self.remove_stale_nodes(), "Art-Net remove stale nodes")
+                self._track_task(
+                    self.__hass.async_create_background_task(
+                        self.remove_stale_nodes(), "Art-Net remove stale nodes"
+                    )
+                )
 
                 log.debug("Sleeping a few seconds before polling again...")
             await asyncio.sleep(random.uniform(2.5, 3))
@@ -365,6 +422,7 @@ class ArtNetServer(asyncio.DatagramProtocol):
 
     def connection_made(self, transport: transports.DatagramTransport) -> None:
         self.startup_time = datetime.datetime.now()
+        self._transport = transport
         log.debug("Server connection made")
         super().connection_made(transport)
 
@@ -582,9 +640,11 @@ class ArtNetServer(asyncio.DatagramProtocol):
             self.update_subscribers()
 
         own_port.port.last_input_seen = datetime.datetime.now()
-        self.__hass.async_create_task(self.disable_input_flag(own_port))
+        self._track_task(self.__hass.async_create_task(self.disable_input_flag(own_port)))
         if self.__state_update_callback:
             self.__state_update_callback(dmx.port_address, dmx.data)
+        if self.dmx_received_callback:
+            self.dmx_received_callback(dmx.port_address, dmx.data)
 
     async def disable_input_flag(self, own_port: OwnPort):
         await asyncio.sleep(4)

@@ -52,8 +52,18 @@ class ArtNetController(BaseNode):
         self.__server.add_port(PortAddress.parse(nr))
         return dmx_universe
 
+    @property
+    def server(self) -> ArtNetServer:
+        return self.__server
+
     def start(self):
         return self.__server.start_server()
+
+    async def stop(self):
+        await self.__server.stop()
+        # BaseNode.__aexit__ cancels the process/refresh tasks; the socket was never
+        # opened for the controller (start() is used instead of __aenter__).
+        await super().__aexit__(None, None, None)
 
     def get_universe(self, nr: int) -> UniverseBridge:
         return super().get_universe(nr)

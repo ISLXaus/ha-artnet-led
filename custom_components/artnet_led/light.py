@@ -28,212 +28,79 @@ from homeassistant.const import CONF_NAME as CONF_DEVICE_NAME
 from homeassistant.const import CONF_PORT as CONF_NODE_PORT
 from homeassistant.const import CONF_TYPE as CONF_DEVICE_TYPE
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_registry import async_get
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util.color import color_rgb_to_rgbw
-from pyartnet import BaseUniverse, Channel
-from pyartnet.errors import UniverseNotFoundError
+from pyartnet import Channel
 
 from custom_components.artnet_led.bridge.artnet_controller import ArtNetController
 from custom_components.artnet_led.bridge.channel_bridge import ChannelBridge
+from custom_components.artnet_led.const import (
+    AVAILABLE_CORRECTIONS,
+    CHANNEL_SIZE,
+    CONF_BYTE_ORDER,
+    CONF_CHANNEL_SETUP,
+    CONF_CHANNEL_SIZE,
+    CONF_DEVICE_CHANNEL,
+    CONF_DEVICE_MAX_TEMP,
+    CONF_DEVICE_MIN_TEMP,
+    CONF_NODE_HOST_OVERRIDE,
+    CONF_NODE_MAX_FPS,
+    CONF_NODE_PORT_OVERRIDE,
+    CONF_NODE_REFRESH,
+    CONF_NODE_TYPE,
+    CONF_NODE_UNIVERSES,
+    CONF_OUTPUT_CORRECTION,
+    CONF_SEND_PARTIAL_UNIVERSE,
+    NODE_TYPES,
+    OWNER_YAML,
+    UNIQUE_ID_PREFIX,
+)
+from custom_components.artnet_led.entity_factory import create_light_entities
+from custom_components.artnet_led.runtime import ArtNetRuntime, NodeConflictError
 from custom_components.artnet_led.util.channel_switch import validate, to_values, from_values
-
-ARTNET_DEFAULT_PORT = 6454
-SACN_DEFAULT_PORT = 5568
-KINET_DEFAULT_PORT = 6038
 
 CONF_DEVICE_TRANSITION = ATTR_TRANSITION
 
-CONF_SEND_PARTIAL_UNIVERSE = "send_partial_universe"
-
 log = logging.getLogger(__name__)
 
-CONF_NODE_HOST_OVERRIDE = "host_override"
-CONF_NODE_PORT_OVERRIDE = "port_override"
-
-CONF_NODE_TYPE = "node_type"
-CONF_NODE_MAX_FPS = "max_fps"
-CONF_NODE_REFRESH = "refresh_every"
-CONF_NODE_UNIVERSES = "universes"
-
-CONF_DEVICE_CHANNEL = "channel"
-CONF_OUTPUT_CORRECTION = "output_correction"
-CONF_CHANNEL_SIZE = "channel_size"
-CONF_BYTE_ORDER = "byte_order"
-
-CONF_DEVICE_MIN_TEMP = "min_temp"
-CONF_DEVICE_MAX_TEMP = "max_temp"
-CONF_CHANNEL_SETUP = "channel_setup"
-
-DOMAIN = "dmx"
-
-AVAILABLE_CORRECTIONS = {"linear": pyartnet.output_correction.linear, "quadratic": pyartnet.output_correction.quadratic,
-                         "cubic": pyartnet.output_correction.cubic, "quadruple": pyartnet.output_correction.quadruple}
-
-type LogicalChannelSize = int
-type LogicalChannelNumBytes = int
-type ChannelSize = tuple[LogicalChannelSize, LogicalChannelNumBytes]
-
-CHANNEL_SIZE: dict[str, ChannelSize] = {
-    "8bit": (1, 1),
-    "16bit": (2, 256),
-    "24bit": (3, 256 ** 2),
-    "32bit": (4, 256 ** 3),
-}
-
-NODES = {}
+# Historical alias: this module's "domain" is the unique_id prefix, not the integration domain.
+DOMAIN = UNIQUE_ID_PREFIX
 
 
 async def async_setup_platform(hass: HomeAssistant, config, async_add_devices, discovery_info=None):
-    # pyartnet expects the created asyncio task to be the task running its wrapper.
-    # Home Assistant's task factory can wrap tasks, which breaks pyartnet's assertions.
-    pyartnet.base.background_task.CREATE_TASK = asyncio.create_task
-
-    client_type = config.get(CONF_NODE_TYPE)
-    max_fps = config.get(CONF_NODE_MAX_FPS)
-    refresh_interval = config.get(CONF_NODE_REFRESH)
+    runtime = ArtNetRuntime.get(hass)
 
     host = config.get(CONF_NODE_HOST)
-    port = config.get(CONF_NODE_PORT)
 
-    real_host = config.get(CONF_NODE_HOST_OVERRIDE)
-    if len(real_host) == 0:
-        real_host = host
-    real_port = config.get(CONF_NODE_PORT_OVERRIDE)
-    if real_port == None:
-        real_port = port
+    try:
+        handle = await runtime.acquire_node(config, owner=OWNER_YAML)
+    except NodeConflictError as e:
+        log.error("Cannot set up YAML node: %s", e)
+        return False
 
-    # setup Node
-    node: pyartnet.base.BaseNode
-    if client_type == "artnet-direct":
-        if real_port is None:
-            real_port = ARTNET_DEFAULT_PORT
-
-        __id = f"{host}:{port}"
-        if __id not in NODES:
-            from pyartnet.base.network import UnicastNetworkTarget
-            __node = pyartnet.ArtNetNode(
-                UnicastNetworkTarget.create(real_host, real_port),
-                max_fps=max_fps,
-                refresh_every=refresh_interval,
-            )
-            await __node.__aenter__()
-            if not refresh_interval:
-                await __node.stop_refresh()
-            NODES[__id] = __node
-
-        node = NODES[__id]
-
-    elif client_type == "artnet-controller":
-        if "server" not in NODES:
-            __node = ArtNetController(hass, max_fps=max_fps, refresh_every=refresh_interval)
-            NODES["server"] = __node
-            __node.start()
-        node = NODES["server"]
-
-    elif client_type == "sacn":
-        if real_port is None:
-            real_port = SACN_DEFAULT_PORT
-
-        __id = f"{host}:{port}"
-        if __id not in NODES:
-            from pyartnet.base.network import UnicastNetworkTarget
-            __node = pyartnet.SacnNode(
-                UnicastNetworkTarget.create(real_host, real_port),
-                max_fps=max_fps,
-                refresh_every=refresh_interval,
-                source_name="ha-artnet-led"
-            )
-            await __node.__aenter__()
-            if not refresh_interval:
-                await __node.stop_refresh()
-            NODES[__id] = __node
-
-        node = NODES[__id]
-    elif client_type == "kinet":
-        if real_port is None:
-            real_port = KINET_DEFAULT_PORT
-
-        __id = f"{host}:{port}"
-        if __id not in NODES:
-            from pyartnet.base.network import UnicastNetworkTarget
-            __node = pyartnet.KiNetNode(
-                UnicastNetworkTarget.create(real_host, real_port),
-                max_fps=max_fps,
-                refresh_every=refresh_interval,
-            )
-            await __node.__aenter__()
-            if not refresh_interval:
-                await __node.stop_refresh()
-            NODES[__id] = __node
-
-        node = NODES[__id]
-
-    else:
-        raise NotImplementedError(f"Unknown client type '{client_type}'")
-
-    entity_registry = async_get(hass)
-
-    device_list = []
-    used_unique_ids = []
-    for universe_nr, universe_cfg in config[CONF_NODE_UNIVERSES].items():
-        try:
-            universe = node.get_universe(universe_nr)
-        except UniverseNotFoundError:
-            universe: BaseUniverse = node.add_universe(universe_nr)
-            universe.set_output_correction(AVAILABLE_CORRECTIONS.get(
-                universe_cfg[CONF_OUTPUT_CORRECTION]
-            ))
-
-        for device in universe_cfg[CONF_DEVICES]:  # type: dict
-            device = device.copy()
-            cls = __CLASS_TYPE[device[CONF_DEVICE_TYPE]]
-
-            channel = device[CONF_DEVICE_CHANNEL]
-            unique_id = f"{DOMAIN}:{host}/{universe_nr}/{channel}"
-
-            name: str = device[CONF_DEVICE_NAME]
-            byte_size = CHANNEL_SIZE[device[CONF_CHANNEL_SIZE]][0]
-            byte_order = device[CONF_BYTE_ORDER]
-
-            entity_id = f"light.{slugify(name)}"
-
-            # If the entity has another unique ID, use that until it's migrated properly
-            entity = entity_registry.async_get(entity_id)
-            if entity:
-                log.info(f"Found existing entity for name {entity_id}, using unique id {unique_id}")
-                if entity.unique_id is not None and entity.unique_id not in used_unique_ids:
-                    unique_id = entity.unique_id
-            used_unique_ids.append(unique_id)
-
-            # create device
-            device["unique_id"] = unique_id
-            d = cls(**device)  # type: DmxBaseLight
-            d.set_type(device[CONF_DEVICE_TYPE])
-
-            d.set_channel(
-                universe.add_channel(
-                    start=channel,
-                    width=d.channel_width,
-                    channel_name=d.name,
-                    byte_size=byte_size,
-                    byte_order=byte_order,
-                )
-            )
-
-            d.channel.set_output_correction(AVAILABLE_CORRECTIONS.get(
-                device[CONF_OUTPUT_CORRECTION]
-            ))
-
-            device_list.append(d)
-
-            send_partial_universe = universe_cfg[CONF_SEND_PARTIAL_UNIVERSE]
-            if not send_partial_universe:
-                universe._resize_universe(512)
+    device_list = create_light_entities(hass, handle.node, host, config[CONF_NODE_UNIVERSES])
+    handle.record_universes(config[CONF_NODE_UNIVERSES])
 
     async_add_devices(device_list)
 
     return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
+    """Set up lights for the UI-defined patch (config entry)."""
+    from custom_components.artnet_led.const import DATA_ENTRY_NODES, DOMAIN as INTEGRATION_DOMAIN
+
+    entry_nodes = hass.data[INTEGRATION_DOMAIN][DATA_ENTRY_NODES].get(entry.entry_id, [])
+
+    entities = []
+    used_unique_ids = []
+    for handle, universes_cfg in entry_nodes:
+        entities.extend(
+            create_light_entities(hass, handle.node, handle.host, universes_cfg, used_unique_ids)
+        )
+        handle.record_universes(universes_cfg)
+
+    async_add_entities(entities)
 
 
 def convert_to_kelvin(kelvin_string) -> int:
@@ -1033,52 +900,59 @@ class DmxXY(DmxBaseLight):
 __CLASS_LIST = [DmxDimmer, DmxRGB, DmxWhite, DmxRGBW, DmxRGBWW, DmxBinary, DmxFixed, DmxXY]
 __CLASS_TYPE = {k.CONF_TYPE: k for k in __CLASS_LIST}
 
+# Public aliases, used by the entity factory and the UI patch validation.
+CLASS_LIST = __CLASS_LIST
+CLASS_TYPE = __CLASS_TYPE
+
+DEVICE_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_DEVICE_CHANNEL): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=512)
+        ),
+        vol.Required(CONF_DEVICE_NAME): cv.string,
+        vol.Optional(CONF_DEVICE_FRIENDLY_NAME): cv.string,
+        vol.Optional(CONF_DEVICE_TYPE, default='dimmer'): vol.In(
+            [k.CONF_TYPE for k in __CLASS_LIST]
+        ),
+        vol.Optional(CONF_DEVICE_TRANSITION, default=0): vol.All(
+            vol.Coerce(float), vol.Range(min=0, max=999)
+        ),
+        vol.Optional(CONF_OUTPUT_CORRECTION, default=None): vol.Any(
+            None, vol.In(AVAILABLE_CORRECTIONS)
+        ),
+        vol.Optional(CONF_CHANNEL_SIZE, default='8bit'): vol.Any(
+            None, vol.In(CHANNEL_SIZE)
+        ),
+        vol.Optional(CONF_BYTE_ORDER, default='big'): vol.Any(
+            None, vol.In(['little', 'big'])
+        ),
+        vol.Optional(CONF_DEVICE_MIN_TEMP, default='2700K'): vol.Match(
+            "\\d+(k|K)"
+        ),
+        vol.Optional(CONF_DEVICE_MAX_TEMP, default='6500K'): vol.Match(
+            "\\d+(k|K)"
+        ),
+        vol.Optional(CONF_CHANNEL_SETUP, default=None): vol.Any(
+            None, cv.string, cv.ensure_list
+        ),
+    }
+)
+
+UNIVERSE_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_SEND_PARTIAL_UNIVERSE, default=True): cv.boolean,
+        vol.Optional(CONF_OUTPUT_CORRECTION, default='linear'): vol.Any(
+            None, vol.In(AVAILABLE_CORRECTIONS)
+        ),
+        vol.Required(CONF_DEVICES): vol.All(cv.ensure_list, [DEVICE_SCHEMA]),
+    }
+)
+
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_NODE_HOST): cv.string,
         vol.Required(CONF_NODE_UNIVERSES): {
-            vol.All(int, vol.Range(min=0, max=1024)): {
-                vol.Optional(CONF_SEND_PARTIAL_UNIVERSE, default=True): cv.boolean,
-                vol.Optional(CONF_OUTPUT_CORRECTION, default='linear'): vol.Any(
-                    None, vol.In(AVAILABLE_CORRECTIONS)
-                ),
-                CONF_DEVICES: vol.All(
-                    cv.ensure_list,
-                    [
-                        {
-                            vol.Required(CONF_DEVICE_CHANNEL): vol.All(
-                                vol.Coerce(int), vol.Range(min=1, max=512)
-                            ),
-                            vol.Required(CONF_DEVICE_NAME): cv.string,
-                            vol.Optional(CONF_DEVICE_FRIENDLY_NAME): cv.string,
-                            vol.Optional(CONF_DEVICE_TYPE, default='dimmer'): vol.In(
-                                [k.CONF_TYPE for k in __CLASS_LIST]
-                            ),
-                            vol.Optional(CONF_DEVICE_TRANSITION, default=0): vol.All(
-                                vol.Coerce(float), vol.Range(min=0, max=999)
-                            ),
-                            vol.Optional(CONF_OUTPUT_CORRECTION, default=None): vol.Any(
-                                None, vol.In(AVAILABLE_CORRECTIONS)
-                            ),
-                            vol.Optional(CONF_CHANNEL_SIZE, default='8bit'): vol.Any(
-                                None, vol.In(CHANNEL_SIZE)
-                            ),
-                            vol.Optional(CONF_BYTE_ORDER, default='big'): vol.Any(
-                                None, vol.In(['little', 'big'])
-                            ),
-                            vol.Optional(CONF_DEVICE_MIN_TEMP, default='2700K'): vol.Match(
-                                "\\d+(k|K)"
-                            ),
-                            vol.Optional(CONF_DEVICE_MAX_TEMP, default='6500K'): vol.Match(
-                                "\\d+(k|K)"
-                            ),
-                            vol.Optional(CONF_CHANNEL_SETUP, default=None): vol.Any(
-                                None, cv.string, cv.ensure_list
-                            ),
-                        }
-                    ],
-                )
-            },
+            vol.All(int, vol.Range(min=0, max=1024)): UNIVERSE_SCHEMA,
         },
         vol.Optional(CONF_NODE_HOST_OVERRIDE, default=""): cv.string,
         vol.Optional(CONF_NODE_PORT): cv.port,
@@ -1090,7 +964,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
             vol.Coerce(float), vol.Range(min=0, max=9999)
         ),
         vol.Optional(CONF_NODE_TYPE, default="artnet-direct"): vol.Any(
-            None, vol.In(["artnet-direct", "artnet-controller", "sacn", "kinet"])
+            None, vol.In(NODE_TYPES)
         ),
     },
     required=True,
