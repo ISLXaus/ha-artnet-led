@@ -445,6 +445,8 @@ export class ArtnetNodeDialog extends LitElement {
               <label>Port (blank = protocol default)</label>
               <input
                 type="number"
+                min="1"
+                max="65535"
                 .value=${n.port != null ? String(n.port) : ''}
                 @input=${(e: Event) => {
                   const v = (e.target as HTMLInputElement).value;
@@ -567,6 +569,12 @@ export class ArtnetNodeDialog extends LitElement {
   private _save() {
     if (!this._working.host?.trim()) {
       this.errorText = 'Host is required';
+      return;
+    }
+    const port = this._working.port;
+    if (port != null && (!Number.isInteger(port) || port < 1 || port > 65535)) {
+      this.errorText =
+        'Port must be a whole number between 1 and 65535 — leave it blank to use the protocol default';
       return;
     }
     const min = minUniverse(this._working.node_type);

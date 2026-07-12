@@ -1,6 +1,6 @@
 {
   "name": "ha-artnet-led-panel",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "DMX Patch panel for the ha-artnet-led Home Assistant integration",
   "scripts": {

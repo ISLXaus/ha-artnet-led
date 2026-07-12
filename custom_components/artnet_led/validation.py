@@ -66,6 +66,15 @@ def compute_dmx_footprint(device: dict) -> tuple[int, int]:
     return start, start + width * byte_size - 1
 
 
+def _coerce_port(value) -> int | None:
+    """Best-effort int port; anything unusable becomes None (= protocol default)."""
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if 1 <= port <= 65535 else None
+
+
 def patch_node_to_setup_config(node: dict) -> dict:
     """Convert a stored patch node into the config dict the runtime/factory expects.
 
@@ -91,9 +100,9 @@ def patch_node_to_setup_config(node: dict) -> dict:
     return {
         CONF_NODE_TYPE: node.get(CONF_NODE_TYPE, "artnet-direct"),
         CONF_NODE_HOST: node.get("host"),
-        CONF_NODE_PORT: node.get("port"),
+        CONF_NODE_PORT: _coerce_port(node.get("port")),
         CONF_NODE_HOST_OVERRIDE: node.get(CONF_NODE_HOST_OVERRIDE) or "",
-        CONF_NODE_PORT_OVERRIDE: node.get(CONF_NODE_PORT_OVERRIDE),
+        CONF_NODE_PORT_OVERRIDE: _coerce_port(node.get(CONF_NODE_PORT_OVERRIDE)),
         CONF_NODE_MAX_FPS: node.get(CONF_NODE_MAX_FPS) or 25,
         CONF_NODE_REFRESH: node.get(CONF_NODE_REFRESH, 120),
         CONF_NODE_PRIORITY: node.get(CONF_NODE_PRIORITY) or 100,
@@ -140,6 +149,17 @@ def validate_patch(hass: HomeAssistant, patch: dict, runtime: ArtNetRuntime) -> 
         if not host or not isinstance(host, str):
             error(f"{node_path}/host", "missing_host", "Host is required")
             continue
+
+        for port_field in ("port", CONF_NODE_PORT_OVERRIDE):
+            value = node.get(port_field)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not (1 <= value <= 65535)
+            ):
+                error(f"{node_path}/{port_field}", "invalid_port",
+                      "Port must be a whole number between 1 and 65535 "
+                      "(leave blank for the protocol default)")
 
         max_fps = node.get(CONF_NODE_MAX_FPS) or 25
         if not (1 <= int(max_fps) <= 50):

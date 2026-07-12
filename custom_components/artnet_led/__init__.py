@@ -114,11 +114,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             log.warning("Skipping patch node %d (%s) due to validation errors",
                         i, node.get("host"))
             continue
-        cfg = patch_node_to_setup_config(node)
         try:
+            cfg = patch_node_to_setup_config(node)
             handle = await runtime.acquire_node(cfg, owner=entry.entry_id)
         except NodeConflictError as e:
             log.error("Skipping patch node %d: %s", i, e)
+            continue
+        except Exception:
+            # Never let one broken node take down the whole entry (and with it
+            # every other node's entities).
+            log.exception("Failed to start patch node %d (%s); skipping it",
+                          i, node.get("host"))
             continue
         entry_nodes.append((handle, cfg["universes"]))
 
