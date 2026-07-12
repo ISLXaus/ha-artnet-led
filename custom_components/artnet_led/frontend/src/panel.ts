@@ -9,7 +9,9 @@ import {
   PatchUniverse,
   YamlNodeSnapshot,
   CORRECTIONS,
+  footprint,
   nodeKey,
+  uuid,
 } from './model';
 import { getPatch, savePatch } from './ws';
 import { newDevice, newNode } from './dialogs';
@@ -101,6 +103,34 @@ export class ArtnetPatchPanel extends LitElement {
     this._patch = { ...this._patch, nodes: [...this._patch.nodes] };
   }
 
+  /**
+   * Immutable update of the selected UI node. Replaces the node object (and the
+   * patch document) so Lit change detection re-renders the grid immediately.
+   */
+  private _updateSelectedNode(updater: (node: PatchNode) => PatchNode) {
+    const [kind, idxStr] = this._selected.split(':');
+    if (kind !== 'ui') return;
+    const idx = Number(idxStr);
+    const nodes = [...this._patch.nodes];
+    nodes[idx] = updater(nodes[idx]);
+    this._patch = { ...this._patch, nodes };
+    this._dirty = true;
+  }
+
+  private _updateUniverse(
+    universeNr: string,
+    updater: (universe: PatchUniverse) => PatchUniverse
+  ) {
+    this._updateSelectedNode((node) => {
+      const universe = node.universes[universeNr];
+      if (!universe) return node;
+      return {
+        ...node,
+        universes: { ...node.universes, [universeNr]: updater(universe) },
+      };
+    });
+  }
+
   private async _save() {
     this._saving = true;
     this._errors = [];
@@ -177,12 +207,14 @@ export class ArtnetPatchPanel extends LitElement {
       this._showToast(`Universe ${nr} already exists`);
       return;
     }
-    node.universes = {
-      ...node.universes,
-      [nr]: { send_partial_universe: true, output_correction: 'linear', devices: [] },
-    };
+    this._updateSelectedNode((n) => ({
+      ...n,
+      universes: {
+        ...n.universes,
+        [nr]: { send_partial_universe: true, output_correction: 'linear', devices: [] },
+      },
+    }));
     this._selectedUniverse = nr;
-    this._markDirty();
   }
 
   private _removeUniverse() {
@@ -195,19 +227,14 @@ export class ArtnetPatchPanel extends LitElement {
     }
     const universes = { ...node.universes };
     delete universes[this._selectedUniverse];
-    node.universes = universes;
+    this._updateSelectedNode((n) => ({ ...n, universes }));
     const keys = Object.keys(universes).sort((a, b) => Number(a) - Number(b));
     this._selectedUniverse = keys[0] ?? '';
-    this._markDirty();
   }
 
   private _setUniverseOption(key: 'output_correction' | 'send_partial_universe', value: unknown) {
     if (this._isYamlSelected()) return;
-    const node = this._currentNode() as PatchNode | undefined;
-    const universe = node?.universes[this._selectedUniverse];
-    if (!universe) return;
-    (universe as unknown as Record<string, unknown>)[key] = value;
-    this._markDirty();
+    this._updateUniverse(this._selectedUniverse, (u) => ({ ...u, [key]: value }));
   }
 
   // ---- device CRUD --------------------------------------------------------
@@ -233,28 +260,61 @@ export class ArtnetPatchPanel extends LitElement {
   }
 
   private _onSaveDevice(e: CustomEvent) {
-    const { device, original } = e.detail as { device: PatchDevice; original: PatchDevice };
+    const { device, original, count } = e.detail as {
+      device: PatchDevice;
+      original: PatchDevice;
+      count: number;
+    };
     if (this._dialog.kind !== 'device') return;
-    const node = this._currentNode() as PatchNode | undefined;
-    const universe = node?.universes[this._dialog.universeNr];
-    if (!universe) return;
-    const idx = universe.devices.findIndex((d) => d.id === original.id);
-    if (idx >= 0) universe.devices[idx] = device;
-    else universe.devices.push(device);
-    universe.devices = [...universe.devices];
+    const universeNr = this._dialog.universeNr;
+
+    let truncated = 0;
+    this._updateUniverse(universeNr, (universe) => {
+      const devices = [...universe.devices];
+      const idx = devices.findIndex((d) => d.id === original.id);
+      if (idx >= 0) {
+        devices[idx] = device;
+      } else if (count > 1) {
+        // Bulk add: enumerate names and place fixtures back-to-back by footprint.
+        let channel = device.channel;
+        for (let i = 1; i <= count; i++) {
+          const fixture = { ...device, id: uuid(), name: `${device.name}_${i}`, channel };
+          const [first, last] = footprint(fixture);
+          if (last > 512) {
+            truncated = count - i + 1;
+            break;
+          }
+          devices.push(fixture);
+          channel = last + 1;
+        }
+      } else {
+        devices.push(device);
+      }
+      return { ...universe, devices };
+    });
+
+    if (truncated) {
+      this._showToast(`Stopped after channel 512 — ${truncated} fixture(s) not added`);
+    }
     this._dialog = { kind: 'none' };
-    this._markDirty();
   }
 
   private _onDeleteDevice(e: CustomEvent) {
     const { device } = e.detail as { device: PatchDevice };
     if (this._dialog.kind !== 'device') return;
-    const node = this._currentNode() as PatchNode | undefined;
-    const universe = node?.universes[this._dialog.universeNr];
-    if (!universe) return;
-    universe.devices = universe.devices.filter((d) => d.id !== device.id);
+    this._updateUniverse(this._dialog.universeNr, (universe) => ({
+      ...universe,
+      devices: universe.devices.filter((d) => d.id !== device.id),
+    }));
     this._dialog = { kind: 'none' };
-    this._markDirty();
+  }
+
+  private _onMoveDevice(e: CustomEvent) {
+    const { deviceId, channel } = e.detail as { deviceId: string; channel: number };
+    this._updateUniverse(this._selectedUniverse, (universe) => ({
+      ...universe,
+      devices: universe.devices.map((d) => (d.id === deviceId ? { ...d, channel } : d)),
+    }));
   }
 
   // ---- render -------------------------------------------------------------
@@ -401,6 +461,7 @@ export class ArtnetPatchPanel extends LitElement {
                         ?readonly=${isYaml}
                         @add-device=${this._onAddDevice}
                         @edit-device=${this._onEditDevice}
+                        @move-device=${this._onMoveDevice}
                         @grid-error=${(e: CustomEvent) => this._showToast(e.detail)}
                       ></artnet-universe-grid>
                     `

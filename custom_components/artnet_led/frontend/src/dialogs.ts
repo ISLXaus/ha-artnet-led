@@ -104,10 +104,12 @@ export class ArtnetDeviceDialog extends LitElement {
   @property() errorText = '';
 
   @state() private _working!: PatchDevice;
+  @state() private _count = 1;
 
   willUpdate(changed: Map<string, unknown>) {
     if (changed.has('device')) {
       this._working = { ...this.device };
+      this._count = 1;
     }
   }
 
@@ -130,6 +132,26 @@ export class ArtnetDeviceDialog extends LitElement {
             .value=${d.name ?? ''}
             @input=${(e: Event) => this._set('name', (e.target as HTMLInputElement).value)}
           />
+
+          ${this.isNew
+            ? html`
+                <label>Quantity</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="512"
+                  .value=${String(this._count)}
+                  @input=${(e: Event) =>
+                    (this._count = Math.max(1, Number((e.target as HTMLInputElement).value) || 1))}
+                />
+                ${this._count > 1
+                  ? html`<div class="hint">
+                      Adds ${this._count} fixtures back-to-back, named
+                      ${d.name || 'name'}_1 … ${d.name || 'name'}_${this._count}
+                    </div>`
+                  : nothing}
+              `
+            : nothing}
 
           <label>Friendly name (optional)</label>
           <input
@@ -281,7 +303,11 @@ export class ArtnetDeviceDialog extends LitElement {
     }
     this.dispatchEvent(
       new CustomEvent('save-device', {
-        detail: { device: this._working, original: this.device },
+        detail: {
+          device: this._working,
+          original: this.device,
+          count: this.isNew ? this._count : 1,
+        },
         bubbles: true,
         composed: true,
       })
