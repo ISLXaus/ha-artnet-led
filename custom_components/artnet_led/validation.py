@@ -21,12 +21,13 @@ from custom_components.artnet_led.const import (
     CONF_NODE_HOST_OVERRIDE,
     CONF_NODE_MAX_FPS,
     CONF_NODE_PORT_OVERRIDE,
+    CONF_NODE_PRIORITY,
     CONF_NODE_REFRESH,
     CONF_NODE_TYPE,
     CONF_NODE_UNIVERSES,
     CONF_OUTPUT_CORRECTION,
     CONF_SEND_PARTIAL_UNIVERSE,
-    NODE_TYPE_ARTNET_CONTROLLER,
+    NODE_TYPE_SACN,
     NODE_TYPES,
     OWNER_YAML,
 )
@@ -95,6 +96,7 @@ def patch_node_to_setup_config(node: dict) -> dict:
         CONF_NODE_PORT_OVERRIDE: node.get(CONF_NODE_PORT_OVERRIDE),
         CONF_NODE_MAX_FPS: node.get(CONF_NODE_MAX_FPS) or 25,
         CONF_NODE_REFRESH: node.get(CONF_NODE_REFRESH, 120),
+        CONF_NODE_PRIORITY: node.get(CONF_NODE_PRIORITY) or 100,
         CONF_NODE_UNIVERSES: universes,
     }
 
@@ -148,6 +150,14 @@ def validate_patch(hass: HomeAssistant, patch: dict, runtime: ArtNetRuntime) -> 
             error(f"{node_path}/refresh_every", "out_of_range",
                   "refresh_every must be between 0 and 9999")
 
+        priority = node.get(CONF_NODE_PRIORITY)
+        if priority is not None and not (0 <= int(priority) <= 200):
+            error(f"{node_path}/priority", "out_of_range",
+                  "sACN priority must be between 0 and 200")
+
+        # E1.31 (sACN) does not allow universe 0.
+        min_universe = 1 if node_type == NODE_TYPE_SACN else 0
+
         key = node_key(node_type, host, node.get("port"))
         if key in seen_node_keys:
             error(f"{node_path}/host", "duplicate_node",
@@ -166,9 +176,9 @@ def validate_patch(hass: HomeAssistant, patch: dict, runtime: ArtNetRuntime) -> 
             except (TypeError, ValueError):
                 error(universe_path, "invalid_universe", "Universe must be a number")
                 continue
-            if not (0 <= nr <= 1024):
+            if not (min_universe <= nr <= 1024):
                 error(universe_path, "invalid_universe",
-                      "Universe must be between 0 and 1024")
+                      f"Universe must be between {min_universe} and 1024 for {node_type}")
 
             occupied: list[tuple[int, int, str]] = []
             for j, device in enumerate(universe.get("devices", [])):

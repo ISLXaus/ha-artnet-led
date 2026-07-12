@@ -46,6 +46,7 @@ from custom_components.artnet_led.const import (
     CONF_NODE_HOST_OVERRIDE,
     CONF_NODE_MAX_FPS,
     CONF_NODE_PORT_OVERRIDE,
+    CONF_NODE_PRIORITY,
     CONF_NODE_REFRESH,
     CONF_NODE_TYPE,
     CONF_NODE_UNIVERSES,
@@ -962,6 +963,9 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         ),
         vol.Optional(CONF_NODE_REFRESH, default=120): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=9999)
+        ),
+        vol.Optional(CONF_NODE_PRIORITY, default=100): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=200)
         ),
         vol.Optional(CONF_NODE_TYPE, default="artnet-direct"): vol.Any(
             None, vol.In(NODE_TYPES)

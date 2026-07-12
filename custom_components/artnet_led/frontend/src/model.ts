@@ -30,6 +30,8 @@ export interface PatchNode {
   port_override?: number | null;
   max_fps?: number;
   refresh_every?: number;
+  /** sACN E1.31 priority (0-200, default 100). Only used by sacn nodes. */
+  priority?: number;
   universes: Record<string, PatchUniverse>;
 }
 
@@ -111,6 +113,11 @@ export function footprint(device: PatchDevice): [number, number] {
   const byteSize = BYTE_SIZE[device.channel_size ?? '8bit'] ?? 1;
   const first = device.channel;
   return [first, first + width * byteSize - 1];
+}
+
+/** Lowest allowed universe number. Mirrors validation.py: E1.31 forbids universe 0. */
+export function minUniverse(nodeType: string): number {
+  return nodeType === 'sacn' ? 1 : 0;
 }
 
 /** Mirrors node_key() in runtime.py. */

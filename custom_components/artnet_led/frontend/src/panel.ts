@@ -10,6 +10,7 @@ import {
   YamlNodeSnapshot,
   CORRECTIONS,
   footprint,
+  minUniverse,
   nodeKey,
   uuid,
 } from './model';
@@ -21,7 +22,8 @@ import './dialogs';
 type DialogState =
   | { kind: 'none' }
   | { kind: 'device'; device: PatchDevice; isNew: boolean; universeNr: string }
-  | { kind: 'node'; node: PatchNode; isNew: boolean };
+  | { kind: 'node'; node: PatchNode; isNew: boolean }
+  | { kind: 'universe'; mode: 'add' | 'renumber'; current: string };
 
 @customElement('artnet-patch-panel')
 export class ArtnetPatchPanel extends LitElement {
@@ -62,6 +64,9 @@ export class ArtnetPatchPanel extends LitElement {
       const result = await getPatch(this.hass);
       this._patch = result.patch ?? { nodes: [] };
       this._yamlNodes = result.yaml_nodes ?? [];
+      // Surface problems in the stored patch right away (e.g. a universe number
+      // that a newer version no longer accepts).
+      this._errors = result.errors ?? [];
       this._loaded = true;
       this._autoSelect();
     } catch (err) {
@@ -194,27 +199,32 @@ export class ArtnetPatchPanel extends LitElement {
 
   private _addUniverse() {
     if (this._isYamlSelected()) return;
-    const node = this._currentNode() as PatchNode | undefined;
-    if (!node) return;
-    const input = prompt('Universe number (0-1024):', '0');
-    if (input === null) return;
-    const nr = String(Number(input));
-    if (Number.isNaN(Number(input)) || Number(nr) < 0 || Number(nr) > 1024) {
-      this._showToast('Universe must be a number between 0 and 1024');
-      return;
-    }
-    if (node.universes[nr]) {
-      this._showToast(`Universe ${nr} already exists`);
-      return;
-    }
-    this._updateSelectedNode((n) => ({
-      ...n,
-      universes: {
-        ...n.universes,
-        [nr]: { send_partial_universe: true, output_correction: 'linear', devices: [] },
-      },
-    }));
+    this._dialog = { kind: 'universe', mode: 'add', current: '' };
+  }
+
+  private _renumberUniverse() {
+    if (this._isYamlSelected() || !this._selectedUniverse) return;
+    this._dialog = { kind: 'universe', mode: 'renumber', current: this._selectedUniverse };
+  }
+
+  private _onSaveUniverse(e: CustomEvent) {
+    const { nr } = e.detail as { nr: string };
+    if (this._dialog.kind !== 'universe') return;
+    const mode = this._dialog.mode;
+    const current = this._dialog.current;
+
+    this._updateSelectedNode((node) => {
+      const universes = { ...node.universes };
+      if (mode === 'add') {
+        universes[nr] = { send_partial_universe: true, output_correction: 'linear', devices: [] };
+      } else {
+        universes[nr] = universes[current];
+        delete universes[current];
+      }
+      return { ...node, universes };
+    });
     this._selectedUniverse = nr;
+    this._dialog = { kind: 'none' };
   }
 
   private _removeUniverse() {
@@ -404,11 +414,18 @@ export class ArtnetPatchPanel extends LitElement {
                   )}
                   ${!isYaml
                     ? html`
-                        <button class="tab add" @click=${this._addUniverse}>+</button>
+                        <button class="tab add" title="Add universe" @click=${this._addUniverse}>
+                          + Add universe
+                        </button>
                         ${this._selectedUniverse
-                          ? html`<button class="tab remove" @click=${this._removeUniverse}>
-                              Remove universe
-                            </button>`
+                          ? html`
+                              <button class="tab" @click=${this._renumberUniverse}>
+                                Renumber
+                              </button>
+                              <button class="tab remove" @click=${this._removeUniverse}>
+                                Remove universe
+                              </button>
+                            `
                           : nothing}
                       `
                     : nothing}
@@ -488,7 +505,7 @@ export class ArtnetPatchPanel extends LitElement {
             <artnet-device-dialog
               .device=${this._dialog.device}
               ?isNew=${this._dialog.isNew}
-              @dialog-closed=${() => (this._dialog = { kind: 'none' })}
+              @panel-dialog-closed=${() => (this._dialog = { kind: 'none' })}
               @save-device=${this._onSaveDevice}
               @delete-device=${this._onDeleteDevice}
             ></artnet-device-dialog>
@@ -499,10 +516,22 @@ export class ArtnetPatchPanel extends LitElement {
             <artnet-node-dialog
               .node=${this._dialog.node}
               ?isNew=${this._dialog.isNew}
-              @dialog-closed=${() => (this._dialog = { kind: 'none' })}
+              @panel-dialog-closed=${() => (this._dialog = { kind: 'none' })}
               @save-node=${this._onSaveNode}
               @delete-node=${this._onDeleteNode}
             ></artnet-node-dialog>
+          `
+        : nothing}
+      ${this._dialog.kind === 'universe'
+        ? html`
+            <artnet-universe-dialog
+              .mode=${this._dialog.mode}
+              .current=${this._dialog.current}
+              .minUniverse=${minUniverse((node as PatchNode)?.node_type ?? 'artnet-direct')}
+              .existing=${universeKeys}
+              @panel-dialog-closed=${() => (this._dialog = { kind: 'none' })}
+              @save-universe=${this._onSaveUniverse}
+            ></artnet-universe-dialog>
           `
         : nothing}
       ${this._toast ? html`<div class="toast">${this._toast}</div>` : nothing}

@@ -293,7 +293,7 @@ export class ArtnetDeviceDialog extends LitElement {
   }
 
   private _cancel() {
-    this.dispatchEvent(new CustomEvent('dialog-closed', { bubbles: true, composed: true }));
+    this.dispatchEvent(new CustomEvent('panel-dialog-closed', { bubbles: true, composed: true }));
   }
 
   private _save() {
@@ -421,6 +421,24 @@ export class ArtnetNodeDialog extends LitElement {
             </div>
           </div>
 
+          ${n.node_type === 'sacn'
+            ? html`
+                <label>sACN priority (0-200, default 100)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="200"
+                  .value=${String(n.priority ?? 100)}
+                  @input=${(e: Event) =>
+                    this._set('priority', Number((e.target as HTMLInputElement).value))}
+                />
+                <div class="hint">
+                  Receivers merge sources by priority; higher wins. Note: sACN universes
+                  start at 1, not 0.
+                </div>
+              `
+            : nothing}
+
           ${this.errorText ? html`<div class="error">${this.errorText}</div>` : nothing}
 
           <div class="actions">
@@ -439,7 +457,7 @@ export class ArtnetNodeDialog extends LitElement {
   }
 
   private _cancel() {
-    this.dispatchEvent(new CustomEvent('dialog-closed', { bubbles: true, composed: true }));
+    this.dispatchEvent(new CustomEvent('panel-dialog-closed', { bubbles: true, composed: true }));
   }
 
   private _save() {
@@ -469,6 +487,84 @@ export class ArtnetNodeDialog extends LitElement {
   static styles = sharedDialogStyles;
 }
 
+/**
+ * Add or renumber a universe. Fires 'save-universe' {nr} (validated here against
+ * the node's allowed range and existing universes).
+ */
+@customElement('artnet-universe-dialog')
+export class ArtnetUniverseDialog extends LitElement {
+  @property() mode: 'add' | 'renumber' = 'add';
+  @property({ type: Number }) minUniverse = 0;
+  /** Universe being renumbered (renumber mode). */
+  @property() current = '';
+  /** Universe numbers already present on the node. */
+  @property({ attribute: false }) existing: string[] = [];
+
+  @state() private _value = '';
+  @state() private _error = '';
+
+  willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('current') || changed.has('mode')) {
+      this._value = this.mode === 'renumber' ? this.current : String(this.minUniverse);
+      this._error = '';
+    }
+  }
+
+  render() {
+    return html`
+      <div class="backdrop" @click=${this._cancel}>
+        <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
+          <h3>
+            ${this.mode === 'add' ? 'Add universe' : `Renumber universe ${this.current}`}
+          </h3>
+
+          <label>Universe number (${this.minUniverse}-1024)</label>
+          <input
+            type="number"
+            min=${this.minUniverse}
+            max="1024"
+            .value=${this._value}
+            @input=${(e: Event) => (this._value = (e.target as HTMLInputElement).value)}
+            @keydown=${(e: KeyboardEvent) => e.key === 'Enter' && this._save()}
+          />
+
+          ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
+
+          <div class="actions">
+            <span class="spacer"></span>
+            <button @click=${this._cancel}>Cancel</button>
+            <button class="primary" @click=${this._save}>
+              ${this.mode === 'add' ? 'Add' : 'Renumber'}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private _cancel() {
+    this.dispatchEvent(new CustomEvent('panel-dialog-closed', { bubbles: true, composed: true }));
+  }
+
+  private _save() {
+    const nr = Number(this._value);
+    if (!Number.isInteger(nr) || nr < this.minUniverse || nr > 1024) {
+      this._error = `Universe must be a whole number between ${this.minUniverse} and 1024`;
+      return;
+    }
+    const key = String(nr);
+    if (key !== this.current && this.existing.includes(key)) {
+      this._error = `Universe ${key} already exists on this node`;
+      return;
+    }
+    this.dispatchEvent(
+      new CustomEvent('save-universe', { detail: { nr: key }, bubbles: true, composed: true })
+    );
+  }
+
+  static styles = sharedDialogStyles;
+}
+
 export function newDevice(channel: number): PatchDevice {
   return {
     id: uuid(),
@@ -491,6 +587,8 @@ export function newNode(): PatchNode {
     port: null,
     max_fps: 25,
     refresh_every: 120,
-    universes: { '0': { send_partial_universe: true, output_correction: 'linear', devices: [] } },
+    priority: 100,
+    // Universe 1 is valid for every protocol (sACN forbids universe 0).
+    universes: { '1': { send_partial_universe: true, output_correction: 'linear', devices: [] } },
   };
 }

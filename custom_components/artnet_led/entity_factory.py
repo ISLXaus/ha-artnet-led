@@ -14,7 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_registry import async_get
 from homeassistant.util import slugify
 from pyartnet import BaseUniverse
-from pyartnet.errors import UniverseNotFoundError
+from pyartnet.errors import InvalidUniverseAddressError, UniverseNotFoundError
 
 from custom_components.artnet_led.const import (
     AVAILABLE_CORRECTIONS,
@@ -50,12 +50,21 @@ def create_light_entities(
 
     for universe_nr, universe_cfg in universes_cfg.items():
         try:
-            universe = node.get_universe(universe_nr)
-        except UniverseNotFoundError:
-            universe: BaseUniverse = node.add_universe(universe_nr)
-            universe.set_output_correction(AVAILABLE_CORRECTIONS.get(
-                universe_cfg[CONF_OUTPUT_CORRECTION]
-            ))
+            try:
+                universe = node.get_universe(universe_nr)
+            except UniverseNotFoundError:
+                universe: BaseUniverse = node.add_universe(universe_nr)
+                universe.set_output_correction(AVAILABLE_CORRECTIONS.get(
+                    universe_cfg[CONF_OUTPUT_CORRECTION]
+                ))
+        except InvalidUniverseAddressError:
+            # e.g. universe 0 on sACN (E1.31 requires 1-63999). Skip this universe
+            # instead of failing the whole platform.
+            log.error(
+                "Universe %s is not valid for this node type; skipping its %d fixture(s)",
+                universe_nr, len(universe_cfg.get(CONF_DEVICES, [])),
+            )
+            continue
 
         for device in universe_cfg[CONF_DEVICES]:  # type: dict
             device = device.copy()

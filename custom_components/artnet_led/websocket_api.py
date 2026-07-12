@@ -42,6 +42,8 @@ def _entry(hass: HomeAssistant):
 @websocket_api.websocket_command({vol.Required("type"): "artnet_led/patch/get"})
 @websocket_api.async_response
 async def ws_patch_get(hass: HomeAssistant, connection, msg) -> None:
+    from custom_components.artnet_led.validation import validate_patch
+
     runtime = ArtNetRuntime.get(hass)
     patch = await _store(hass).async_load()
     connection.send_result(
@@ -51,6 +53,9 @@ async def ws_patch_get(hass: HomeAssistant, connection, msg) -> None:
             "patch": patch,
             "yaml_nodes": runtime.snapshot(owner=OWNER_YAML),
             "entry_exists": _entry(hass) is not None,
+            # Problems in the *stored* patch (e.g. after an upgrade tightened the
+            # rules), so the panel can point at them immediately.
+            "errors": validate_patch(hass, patch, runtime),
         },
     )
 

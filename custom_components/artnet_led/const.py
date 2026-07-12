@@ -42,6 +42,7 @@ CONF_NODE_REFRESH = "refresh_every"
 CONF_NODE_UNIVERSES = "universes"
 CONF_NODE_HOST_OVERRIDE = "host_override"
 CONF_NODE_PORT_OVERRIDE = "port_override"
+CONF_NODE_PRIORITY = "priority"  # sACN E1.31 priority, 0-200, default 100
 
 CONF_SEND_PARTIAL_UNIVERSE = "send_partial_universe"
 

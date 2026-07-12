@@ -5,6 +5,8 @@ export interface PatchGetResult {
   patch: PatchDoc;
   yaml_nodes: YamlNodeSnapshot[];
   entry_exists: boolean;
+  /** Validation problems in the stored patch, if any. */
+  errors?: PatchError[];
 }
 
 export interface SaveResult {

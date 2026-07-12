@@ -17,6 +17,7 @@ from custom_components.artnet_led.const import (
     CONF_NODE_HOST_OVERRIDE,
     CONF_NODE_MAX_FPS,
     CONF_NODE_PORT_OVERRIDE,
+    CONF_NODE_PRIORITY,
     CONF_NODE_REFRESH,
     CONF_NODE_TYPE,
     DATA_RUNTIME,
@@ -135,9 +136,12 @@ class ArtNetRuntime:
                 max_fps, refresh_interval,
             )
         elif node_type == NODE_TYPE_SACN:
+            from custom_components.artnet_led.bridge.sacn_node import PrioritySacnNode
+
             node = await self._create_stock_node(
-                pyartnet.SacnNode, real_host, real_port or SACN_DEFAULT_PORT,
+                PrioritySacnNode, real_host, real_port or SACN_DEFAULT_PORT,
                 max_fps, refresh_interval, source_name="ha-artnet-led",
+                priority=node_cfg.get(CONF_NODE_PRIORITY) or 100,
             )
         elif node_type == NODE_TYPE_KINET:
             node = await self._create_stock_node(
