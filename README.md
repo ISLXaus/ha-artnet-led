@@ -111,6 +111,8 @@ light:
   - **'artnet-controller'**: Auto-discovers ArtNet nodes and other controllers, can be picked up by other controllers. Will allow Home Assistant lights to be updated through DMX input.
   - **'sacn'**: The E1.31 sACN protocol, directly sending to a node's IP.
   - **'kinet'**: The KiNET, directly sending to a node's IP.
+- **priority** (*Optional; default=100; sACN only*): E1.31 priority (0-200). Receivers merge multiple sources by priority; higher wins.
+- **multicast** (*Optional; default=False; sACN only*): send each universe to its standard `239.255.x.x` multicast group instead of unicast to `host`. This is how most sACN receivers and viewer/monitoring apps expect to receive data; with unicast, viewer apps on other machines will not see the output. When enabled, `host` is only used as an identifier.
 - **universe** (*Required*): Art-Net universe for following DMX channels.
   - **send_partial_universe** (*Optional; default=True*): Some controllers only accept full DMX frames. Set to `False` 
     to always send the full 512 channels to every universe.

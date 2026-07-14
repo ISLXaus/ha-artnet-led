@@ -504,6 +504,23 @@ export class ArtnetNodeDialog extends LitElement {
                   Receivers merge sources by priority; higher wins. Note: sACN universes
                   start at 1, not 0.
                 </div>
+
+                <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;color:var(--primary-text-color)">
+                  <input
+                    type="checkbox"
+                    style="width:auto"
+                    .checked=${n.multicast ?? false}
+                    @change=${(e: Event) =>
+                      this._set('multicast', (e.target as HTMLInputElement).checked)}
+                  />
+                  Multicast (standard sACN)
+                </label>
+                <div class="hint">
+                  Sends each universe to its 239.255.x.x multicast group, which is what
+                  most receivers and sACN viewer apps listen to. When enabled, Host is
+                  only a display name and Port is ignored. Unchecked = unicast directly
+                  to the host.
+                </div>
               `
             : nothing}
 

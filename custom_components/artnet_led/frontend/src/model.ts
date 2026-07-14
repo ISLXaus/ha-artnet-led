@@ -32,6 +32,8 @@ export interface PatchNode {
   refresh_every?: number;
   /** sACN E1.31 priority (0-200, default 100). Only used by sacn nodes. */
   priority?: number;
+  /** sACN: send each universe to its 239.255.x.x multicast group instead of unicast. */
+  multicast?: boolean;
   universes: Record<string, PatchUniverse>;
 }
 

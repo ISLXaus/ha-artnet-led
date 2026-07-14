@@ -16,6 +16,7 @@ from custom_components.artnet_led.const import (
     ARTNET_DEFAULT_PORT,
     CONF_NODE_HOST_OVERRIDE,
     CONF_NODE_MAX_FPS,
+    CONF_NODE_MULTICAST,
     CONF_NODE_PORT_OVERRIDE,
     CONF_NODE_PRIORITY,
     CONF_NODE_REFRESH,
@@ -138,11 +139,34 @@ class ArtNetRuntime:
         elif node_type == NODE_TYPE_SACN:
             from custom_components.artnet_led.bridge.sacn_node import PrioritySacnNode
 
-            node = await self._create_stock_node(
-                PrioritySacnNode, real_host, real_port or SACN_DEFAULT_PORT,
-                max_fps, refresh_interval, source_name="ha-artnet-led",
+            if node_cfg.get(CONF_NODE_MULTICAST):
+                # Standard sACN distribution: each universe goes to its
+                # 239.255.x.x multicast group; receivers (and sACN monitoring
+                # tools) join those groups. The host is only an identifier.
+                from pyartnet.base.network import MulticastNetworkTarget
+
+                from custom_components.artnet_led.client.net_utils import get_private_ip
+
+                try:
+                    source_ip = get_private_ip()
+                except Exception:
+                    source_ip = "0.0.0.0"
+                target = MulticastNetworkTarget.create(source_ip)
+            else:
+                from pyartnet.base.network import UnicastNetworkTarget
+
+                target = UnicastNetworkTarget.create(
+                    real_host, real_port or SACN_DEFAULT_PORT
+                )
+
+            node = PrioritySacnNode(
+                target,
+                max_fps=max_fps,
+                refresh_every=refresh_interval,
+                source_name="ha-artnet-led",
                 priority=node_cfg.get(CONF_NODE_PRIORITY) or 100,
             )
+            await self._start_node(node, refresh_interval)
         elif node_type == NODE_TYPE_KINET:
             node = await self._create_stock_node(
                 pyartnet.KiNetNode, real_host, real_port or KINET_DEFAULT_PORT,
@@ -162,19 +186,23 @@ class ArtNetRuntime:
         return handle
 
     @staticmethod
-    async def _create_stock_node(cls, real_host, real_port, max_fps, refresh_interval, **kwargs):
+    async def _start_node(node, refresh_interval):
+        await node.__aenter__()
+        if not refresh_interval:
+            await node.stop_refresh()
+        return node
+
+    @staticmethod
+    async def _create_stock_node(node_cls, real_host, real_port, max_fps, refresh_interval, **kwargs):
         from pyartnet.base.network import UnicastNetworkTarget
 
-        node = cls(
+        node = node_cls(
             UnicastNetworkTarget.create(real_host, real_port),
             max_fps=max_fps,
             refresh_every=refresh_interval,
             **kwargs,
         )
-        await node.__aenter__()
-        if not refresh_interval:
-            await node.stop_refresh()
-        return node
+        return await ArtNetRuntime._start_node(node, refresh_interval)
 
     async def release_owner(self, owner: str) -> None:
         for handle in self.handles(owner):

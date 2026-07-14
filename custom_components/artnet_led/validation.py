@@ -20,6 +20,7 @@ from custom_components.artnet_led.const import (
     CONF_DEVICE_CHANNEL,
     CONF_NODE_HOST_OVERRIDE,
     CONF_NODE_MAX_FPS,
+    CONF_NODE_MULTICAST,
     CONF_NODE_PORT_OVERRIDE,
     CONF_NODE_PRIORITY,
     CONF_NODE_REFRESH,
@@ -106,6 +107,7 @@ def patch_node_to_setup_config(node: dict) -> dict:
         CONF_NODE_MAX_FPS: node.get(CONF_NODE_MAX_FPS) or 25,
         CONF_NODE_REFRESH: node.get(CONF_NODE_REFRESH, 120),
         CONF_NODE_PRIORITY: node.get(CONF_NODE_PRIORITY) or 100,
+        CONF_NODE_MULTICAST: bool(node.get(CONF_NODE_MULTICAST)),
         CONF_NODE_UNIVERSES: universes,
     }
 

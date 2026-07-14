@@ -1,4 +1,6 @@
-"""sACN specifics: universe 0 is invalid, priority is configurable."""
+"""sACN specifics: universe 0 is invalid, priority is configurable, wire output."""
+import asyncio
+
 import pytest
 from pyartnet.base.network import UnicastNetworkTarget
 
@@ -49,3 +51,88 @@ def test_priority_in_sacn_packet():
 def test_priority_range_enforced():
     with pytest.raises(ValueError):
         PrioritySacnNode(UnicastNetworkTarget.create("127.0.0.1", 5568), priority=201)
+
+
+class _UdpCollector(asyncio.DatagramProtocol):
+    def __init__(self):
+        self.packets: list[bytes] = []
+
+    def datagram_received(self, data, addr):
+        self.packets.append(data)
+
+
+async def test_sacn_unicast_packets_on_the_wire():
+    """End-to-end: changing channel values emits real E1.31 UDP packets."""
+    import pyartnet.base.background_task as background_task
+
+    background_task.CREATE_TASK = asyncio.create_task
+
+    loop = asyncio.get_running_loop()
+    transport, collector = await loop.create_datagram_endpoint(
+        _UdpCollector, local_addr=("127.0.0.1", 0)
+    )
+    port = transport.get_extra_info("sockname")[1]
+
+    node = PrioritySacnNode(
+        UnicastNetworkTarget.create("127.0.0.1", port),
+        priority=42, source_name="wire-test", refresh_every=0,
+    )
+    async with node:
+        await node.stop_refresh()
+        universe = node.add_universe(101)
+        channel = universe.add_channel(start=1, width=3)
+        channel.set_values([255, 128, 1])
+        await asyncio.sleep(0.3)
+
+    transport.close()
+
+    assert collector.packets, "no sACN packets received"
+    packet = collector.packets[0]
+    # Root layer is 38 bytes; framing layer: flags(2) + vector(4) + source(64),
+    # so priority sits at offset 38 + 70 = 108 and universe at 113-114.
+    assert packet[108] == 42
+    assert int.from_bytes(packet[113:115], "big") == 101
+    # DMX start code 0x00 followed by our values.
+    assert packet[125] == 0
+    assert list(packet[126:129]) == [255, 128, 1]
+
+
+async def test_sacn_multicast_universe_destination():
+    """Multicast mode must target the per-universe 239.255.x.x group."""
+    from pyartnet.base.network import MulticastNetworkTarget
+
+    node = PrioritySacnNode(
+        MulticastNetworkTarget.create("127.0.0.1"), source_name="mc-test"
+    )
+    # The universe destination lookup needs the node's socket.
+    async with node:
+        assert node.add_universe(1)._dst == ("239.255.0.1", 5568)
+        assert node.add_universe(101)._dst == ("239.255.0.101", 5568)
+        assert node.add_universe(256)._dst == ("239.255.1.1", 5568)
+
+
+async def test_runtime_creates_multicast_sacn_node(hass):
+    from unittest.mock import patch
+
+    from pyartnet.base.network import MulticastNetworkTarget
+
+    from custom_components.artnet_led.validation import patch_node_to_setup_config
+
+    cfg = patch_node_to_setup_config(
+        {
+            "id": "n", "node_type": "sacn", "host": "10.0.0.162",
+            "multicast": True, "priority": 150, "refresh_every": 0,
+            "universes": {},
+        }
+    )
+    runtime = ArtNetRuntime.get(hass)
+    with patch(
+        "custom_components.artnet_led.client.net_utils.get_private_ip",
+        return_value="127.0.0.1",
+    ):
+        handle = await runtime.acquire_node(cfg, owner="test")
+    try:
+        assert isinstance(handle.node._network, MulticastNetworkTarget)
+        assert handle.node.priority == 150
+    finally:
+        await runtime.release_owner("test")

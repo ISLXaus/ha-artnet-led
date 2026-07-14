@@ -43,6 +43,7 @@ CONF_NODE_UNIVERSES = "universes"
 CONF_NODE_HOST_OVERRIDE = "host_override"
 CONF_NODE_PORT_OVERRIDE = "port_override"
 CONF_NODE_PRIORITY = "priority"  # sACN E1.31 priority, 0-200, default 100
+CONF_NODE_MULTICAST = "multicast"  # sACN: send to 239.255.x.x per universe instead of unicast
 
 CONF_SEND_PARTIAL_UNIVERSE = "send_partial_universe"
 
