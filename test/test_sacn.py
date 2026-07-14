@@ -111,6 +111,49 @@ async def test_sacn_multicast_universe_destination():
         assert node.add_universe(256)._dst == ("239.255.1.1", 5568)
 
 
+def test_universe_discovery_packet_format():
+    """E1.31-2016 Universe Discovery: what sACNView uses to list sources."""
+    node = PrioritySacnNode(
+        UnicastNetworkTarget.create("127.0.0.1", 5568), source_name="disco"
+    )
+    sent = []
+    node._send_data = lambda data, dst=None: sent.append(
+        (bytes(node._packet_base), bytes(data), dst)
+    )
+    node.add_universe(1)
+    node.add_universe(101)
+
+    node.send_discovery()
+
+    base, framing, dst = sent[0]
+    assert dst == ("239.255.250.214", 5568)
+    assert base[18:22] == b"\x00\x00\x00\x08"      # VECTOR_ROOT_E131_EXTENDED
+    assert framing[2:6] == b"\x00\x00\x00\x02"     # VECTOR_E131_EXTENDED_DISCOVERY
+    assert framing[6:11] == b"disco"               # source name
+    assert framing[76:80] == b"\x00\x00\x00\x01"   # UNIVERSE_DISCOVERY_UNIVERSE_LIST
+    assert framing[80] == 0 and framing[81] == 0   # page / last page
+    assert framing[82:84] == (1).to_bytes(2, "big")
+    assert framing[84:86] == (101).to_bytes(2, "big")
+    assert len(framing) == 86
+
+
+async def test_discovery_task_lifecycle():
+    """Discovery announcements start with the node and stop with it."""
+    node = PrioritySacnNode(
+        UnicastNetworkTarget.create("127.0.0.1", 5568),
+        source_name="lifecycle", refresh_every=0,
+    )
+    destinations = []
+    node._send_data = lambda data, dst=None: destinations.append(dst)
+
+    async with node:
+        await asyncio.sleep(0.05)
+        assert node._discovery_task is not None
+        assert ("239.255.250.214", 5568) in destinations
+
+    assert node._discovery_task is None
+
+
 async def test_runtime_creates_multicast_sacn_node(hass):
     from unittest.mock import patch
 
