@@ -14,7 +14,7 @@ import {
   nodeKey,
   uuid,
 } from './model';
-import { getPatch, savePatch } from './ws';
+import { exportPatchYaml, getPatch, importPatchYaml, savePatch } from './ws';
 import { newDevice, newNode } from './dialogs';
 import './universe-grid';
 import './dialogs';
@@ -23,7 +23,8 @@ type DialogState =
   | { kind: 'none' }
   | { kind: 'device'; device: PatchDevice; isNew: boolean; universeNr: string }
   | { kind: 'node'; node: PatchNode; isNew: boolean }
-  | { kind: 'universe'; mode: 'add' | 'renumber'; current: string };
+  | { kind: 'universe'; mode: 'add' | 'renumber'; current: string }
+  | { kind: 'yaml'; yamlText: string; errorText: string };
 
 @customElement('artnet-patch-panel')
 export class ArtnetPatchPanel extends LitElement {
@@ -159,6 +160,39 @@ export class ArtnetPatchPanel extends LitElement {
     this._toast = message;
     clearTimeout(this._toastTimer);
     this._toastTimer = window.setTimeout(() => (this._toast = ''), 4000);
+  }
+
+  // ---- YAML export/import -------------------------------------------------
+
+  private async _openYamlDialog() {
+    try {
+      const result = await exportPatchYaml(this.hass, this._patch);
+      this._dialog = { kind: 'yaml', yamlText: result.yaml, errorText: '' };
+    } catch (err) {
+      this._showToast(`Export failed: ${err}`);
+    }
+  }
+
+  private async _onImportPatch(e: CustomEvent) {
+    if (this._dialog.kind !== 'yaml') return;
+    const { content } = e.detail as { content: string };
+    try {
+      const result = await importPatchYaml(this.hass, content);
+      this._patch = result.patch;
+      this._dirty = true;
+      this._errors = result.errors;
+      this._dialog = { kind: 'none' };
+      this._selected = '';
+      this._autoSelect();
+      this._showToast(
+        result.valid
+          ? 'Loaded into editor — review and Save & Apply'
+          : 'Loaded with validation errors — fix them before saving'
+      );
+    } catch (err: unknown) {
+      const message = (err as { message?: string })?.message ?? String(err);
+      this._dialog = { kind: 'yaml', yamlText: content, errorText: message };
+    }
   }
 
   // ---- node CRUD ----------------------------------------------------------
@@ -345,6 +379,7 @@ export class ArtnetPatchPanel extends LitElement {
         <h1>DMX Patch</h1>
         ${this._dirty ? html`<span class="dirty">unsaved changes</span>` : nothing}
         <span class="spacer"></span>
+        <button class="header-secondary" @click=${this._openYamlDialog}>YAML</button>
         <button
           class="primary"
           ?disabled=${!this._dirty || this._saving}
@@ -522,6 +557,16 @@ export class ArtnetPatchPanel extends LitElement {
             ></artnet-node-dialog>
           `
         : nothing}
+      ${this._dialog.kind === 'yaml'
+        ? html`
+            <artnet-yaml-dialog
+              .yamlText=${this._dialog.yamlText}
+              .errorText=${this._dialog.errorText}
+              @panel-dialog-closed=${() => (this._dialog = { kind: 'none' })}
+              @import-patch=${this._onImportPatch}
+            ></artnet-yaml-dialog>
+          `
+        : nothing}
       ${this._dialog.kind === 'universe'
         ? html`
             <artnet-universe-dialog
@@ -588,6 +633,11 @@ export class ArtnetPatchPanel extends LitElement {
     button.primary:disabled {
       opacity: 0.5;
       cursor: default;
+    }
+    button.header-secondary {
+      background: transparent;
+      color: var(--app-header-text-color, #fff);
+      border: 1px solid color-mix(in srgb, var(--app-header-text-color, #fff) 45%, transparent);
     }
     .layout {
       display: flex;

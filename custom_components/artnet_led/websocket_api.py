@@ -25,6 +25,8 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_patch_get)
     websocket_api.async_register_command(hass, ws_patch_validate)
     websocket_api.async_register_command(hass, ws_patch_save)
+    websocket_api.async_register_command(hass, ws_patch_export)
+    websocket_api.async_register_command(hass, ws_patch_import)
     websocket_api.async_register_command(hass, ws_status_get)
     websocket_api.async_register_command(hass, ws_entity_map_get)
     websocket_api.async_register_command(hass, ws_dmx_subscribe)
@@ -107,6 +109,86 @@ async def ws_patch_save(hass: HomeAssistant, connection, msg) -> None:
         )
 
     connection.send_result(msg["id"], {"success": True, "errors": []})
+
+
+def _strip_ids(value):
+    """Remove panel-internal 'id' fields for clean, shareable YAML."""
+    if isinstance(value, dict):
+        return {k: _strip_ids(v) for k, v in value.items() if k != "id"}
+    if isinstance(value, list):
+        return [_strip_ids(v) for v in value]
+    return value
+
+
+def _ensure_ids(patch: dict) -> dict:
+    """(Re)generate the panel-internal ids after an import."""
+    from uuid import uuid4
+
+    for node in patch.get("nodes", []):
+        if isinstance(node, dict):
+            node["id"] = str(uuid4())
+            for universe in (node.get("universes") or {}).values():
+                if isinstance(universe, dict):
+                    for device in universe.get("devices") or []:
+                        if isinstance(device, dict):
+                            device["id"] = str(uuid4())
+    return patch
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "artnet_led/patch/export",
+        vol.Required("patch"): dict,
+    }
+)
+@websocket_api.async_response
+async def ws_patch_export(hass: HomeAssistant, connection, msg) -> None:
+    """Serialize a patch document (usually the panel's working copy) to YAML."""
+    import yaml
+
+    text = yaml.safe_dump(
+        _strip_ids(msg["patch"]), sort_keys=False, default_flow_style=False, indent=2
+    )
+    connection.send_result(msg["id"], {"yaml": text})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "artnet_led/patch/import",
+        vol.Required("content"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_patch_import(hass: HomeAssistant, connection, msg) -> None:
+    """Parse YAML (or JSON) into a patch document and validate it.
+
+    The result is NOT saved; the panel loads it into the editor as unsaved
+    changes so the user can review and Save & Apply.
+    """
+    import yaml
+
+    from custom_components.artnet_led.validation import validate_patch
+
+    try:
+        data = yaml.safe_load(msg["content"])
+    except yaml.YAMLError as e:
+        connection.send_error(msg["id"], "invalid_yaml", f"Could not parse YAML: {e}")
+        return
+
+    if isinstance(data, list):
+        data = {"nodes": data}
+    if not isinstance(data, dict) or not isinstance(data.get("nodes"), list):
+        connection.send_error(
+            msg["id"], "invalid_structure",
+            "Expected a document with a 'nodes:' list (or a bare list of nodes)",
+        )
+        return
+
+    patch = _ensure_ids({"nodes": data["nodes"]})
+    errors = validate_patch(hass, patch, ArtNetRuntime.get(hass))
+    connection.send_result(msg["id"], {"patch": patch, "valid": not errors, "errors": errors})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "artnet_led/status/get"})

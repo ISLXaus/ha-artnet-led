@@ -45,6 +45,10 @@ Since v0.2.0 the integration ships a **DMX Patch** panel in the Home Assistant s
 
 The first *Save & Apply* automatically creates the *DMX Patch* config entry (also available via *Settings → Devices & Services → Add integration → DMX Artnet integration*). The patch itself is stored in `.storage/artnet_led.patch`.
 
+### Backup / edit as YAML
+
+The **YAML** button in the panel header opens the whole patch as YAML text: copy or download it as a backup, or paste/load an edited version and press *Load into editor*. Imports are parsed and validated server-side (JSON works too), loaded as unsaved changes for review, and only take effect once you *Save & Apply*.
+
 ### Coexistence with YAML
 
 Existing YAML configuration keeps working unchanged. YAML-defined nodes appear in the panel read-only (🔒), with live monitoring available. A node (`host:port`) can be owned by either YAML or the panel, not both — the panel will refuse to save a node that is already configured in YAML. To migrate a node from YAML to the UI, remove it from `configuration.yaml`, restart once, then recreate it in the panel (entities keep their history as long as names and channels stay the same).

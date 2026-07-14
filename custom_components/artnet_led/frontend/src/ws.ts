@@ -33,6 +33,15 @@ export const validatePatch = (hass: HomeAssistant, patch: PatchDoc) =>
 export const savePatch = (hass: HomeAssistant, patch: PatchDoc) =>
   hass.callWS<SaveResult>({ type: 'artnet_led/patch/save', patch });
 
+export const exportPatchYaml = (hass: HomeAssistant, patch: PatchDoc) =>
+  hass.callWS<{ yaml: string }>({ type: 'artnet_led/patch/export', patch });
+
+export const importPatchYaml = (hass: HomeAssistant, content: string) =>
+  hass.callWS<{ patch: PatchDoc; valid: boolean; errors: PatchError[] }>({
+    type: 'artnet_led/patch/import',
+    content,
+  });
+
 export const getStatus = (hass: HomeAssistant) =>
   hass.callWS<{ nodes: unknown[]; discovered: unknown[] }>({
     type: 'artnet_led/status/get',

@@ -702,6 +702,130 @@ export class ArtnetUniverseDialog extends LitElement {
   static styles = sharedDialogStyles;
 }
 
+/**
+ * Export/import the patch as YAML for backup or external editing.
+ * Fires 'import-patch' {content} — the panel round-trips it through the backend
+ * parser/validator and loads the result as unsaved changes.
+ */
+@customElement('artnet-yaml-dialog')
+export class ArtnetYamlDialog extends LitElement {
+  /** YAML of the current working patch, provided by the panel. */
+  @property() yamlText = '';
+  @property() errorText = '';
+
+  @state() private _text = '';
+  @state() private _copied = false;
+
+  willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('yamlText')) {
+      this._text = this.yamlText;
+    }
+  }
+
+  render() {
+    return html`
+      <div class="backdrop" @click=${this._cancel}>
+        <div class="dialog wide" @click=${(e: Event) => e.stopPropagation()}>
+          <h3>Patch as YAML</h3>
+          <div class="hint">
+            Backup: copy or download this. Restore/edit: paste (or load a file), then
+            "Load into editor" — nothing is applied until you Save &amp; Apply.
+          </div>
+
+          <textarea
+            spellcheck="false"
+            .value=${this._text}
+            @input=${(e: Event) => (this._text = (e.target as HTMLTextAreaElement).value)}
+          ></textarea>
+
+          ${this.errorText ? html`<div class="error">${this.errorText}</div>` : nothing}
+
+          <div class="actions">
+            <button @click=${this._copy}>${this._copied ? 'Copied ✓' : 'Copy'}</button>
+            <button @click=${this._download}>Download</button>
+            <button @click=${this._pickFile}>Load file…</button>
+            <span class="spacer"></span>
+            <button @click=${this._cancel}>Close</button>
+            <button class="primary" @click=${this._import}>Load into editor</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private async _copy() {
+    try {
+      await navigator.clipboard.writeText(this._text);
+      this._copied = true;
+      setTimeout(() => (this._copied = false), 1500);
+    } catch {
+      this.errorText = 'Clipboard unavailable — select the text and copy manually';
+    }
+  }
+
+  private _download() {
+    const blob = new Blob([this._text], { type: 'application/yaml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'dmx_patch.yaml';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private _pickFile() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.yaml,.yml,.json,.txt';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (file) {
+        this._text = await file.text();
+        this.errorText = '';
+      }
+    };
+    input.click();
+  }
+
+  private _import() {
+    this.dispatchEvent(
+      new CustomEvent('import-patch', {
+        detail: { content: this._text },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private _cancel() {
+    this.dispatchEvent(new CustomEvent('panel-dialog-closed', { bubbles: true, composed: true }));
+  }
+
+  static styles = [
+    sharedDialogStyles,
+    css`
+      .dialog.wide {
+        width: min(680px, calc(100vw - 32px));
+      }
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 320px;
+        margin-top: 12px;
+        padding: 10px;
+        border-radius: 6px;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        background: var(--secondary-background-color, #fafafa);
+        color: var(--primary-text-color, #212121);
+        font-family: var(--code-font-family, 'SFMono-Regular', Menlo, Consolas, monospace);
+        font-size: 0.8rem;
+        line-height: 1.45;
+        white-space: pre;
+      }
+    `,
+  ];
+}
+
 export function newDevice(channel: number): PatchDevice {
   return {
     id: uuid(),
