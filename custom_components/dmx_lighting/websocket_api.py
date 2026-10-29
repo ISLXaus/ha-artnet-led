@@ -30,6 +30,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_dmx_subscribe)
     websocket_api.async_register_command(hass, ws_effect_preview)
     websocket_api.async_register_command(hass, ws_effect_preview_update)
+    websocket_api.async_register_command(hass, ws_effect_output_subscribe)
 
 
 def _store(hass: HomeAssistant):
@@ -334,3 +335,37 @@ def ws_effect_preview_update(hass: HomeAssistant, connection, msg) -> None:
     if "level" in msg:
         engine.set_level(key, msg["level"])
     connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({vol.Required("type"): "dmx_lighting/effect/output/subscribe"})
+@callback
+def ws_effect_output_subscribe(hass: HomeAssistant, connection, msg) -> None:
+    """Stream what effects are actually outputting, for the panel's live views.
+
+    Sends {"fixtures": {name: [level 0..1, [r, g, b] | null]}} for every fixture an
+    effect is driving, about 10 times a second and only when it changed. Fixtures
+    not listed show their own light entity's state.
+    """
+    from datetime import timedelta
+
+    from homeassistant.helpers.event import async_track_time_interval
+
+    last: dict | None = None
+
+    @callback
+    def send(_now=None) -> None:
+        nonlocal last
+        engine = _engine(hass)
+        output = engine.output if engine is not None else {}
+        payload = {
+            name: [round(level, 3), list(rgb) if rgb else None]
+            for name, (level, rgb) in output.items()
+        }
+        if payload != last:
+            last = payload
+            connection.send_event(msg["id"], {"fixtures": payload})
+
+    unsub = async_track_time_interval(hass, send, timedelta(milliseconds=100))
+    connection.subscriptions[msg["id"]] = unsub
+    connection.send_result(msg["id"])
+    send()

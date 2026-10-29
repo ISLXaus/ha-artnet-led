@@ -178,6 +178,14 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         finally:
             self._state, self._attr_brightness, self._vals = saved
 
+    def display_rgb(self) -> tuple[int, int, int] | None:
+        """The light's own colour as Home Assistant shows it (None: no colour / white)."""
+        if self.hass is None or not self.entity_id:
+            return None
+        state = self.hass.states.get(self.entity_id)
+        rgb = state.attributes.get("rgb_color") if state is not None else None
+        return tuple(int(v) for v in rgb[:3]) if rgb else None
+
     def normal_level(self) -> float:
         """Intensity 0..1 without an effect: the light entity's brightness, 0 when off."""
         if not self.is_on:

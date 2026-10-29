@@ -11,12 +11,13 @@ console. Intensity effects (chase, wave, ...) drive the intensity layer and colo
 effects (rainbow, colour steps, ...) drive the colour layer, so one of each can run on
 the same fixture at once: e.g. a chase over a rainbow.
 
-Ownership per layer is "latest takes precedence" (LTP):
-- Starting an effect takes over its layer on its fixtures from any other effect,
-  crossfading from that effect over the new one's fade-in time.
+Each layer is a stack, "latest takes precedence" (LTP) like a console:
+- Starting an effect puts it on top of its layer on its fixtures, crossfading from
+  whatever was showing over the new effect's fade-in time.
+- Stopping an effect fades it out to whatever is underneath: the next effect still
+  running on that layer, or (for intensity) the colour effect's level, or the
+  fixture's normal state (what its light entity says).
 - Any manual change to a fixture (turn on/off, colour, ...) releases it from all effects.
-- Stopping an effect fades its layer back to the fixture's normal state (what its
-  light entity says) and releases it.
 """
 from __future__ import annotations
 
@@ -109,13 +110,11 @@ class RunningEffect:
 
 @dataclass
 class Layer:
-    """One effect driving one layer of one fixture."""
+    """One effect in one layer's stack on one fixture."""
 
     key: str
     since: float
     fade: float
-    # The effect this one took over from, crossfaded from until the fade-in is done.
-    prev: str | None = None
 
     def fade_weight(self, now: float) -> float:
         if not self.fade:
@@ -142,7 +141,10 @@ class EffectEngine:
         self.fixtures: dict[str, DmxBaseLight] = {}
         self.presets: dict[str, dict] = {}       # effect key -> preset (live dict)
         self.running: dict[str, RunningEffect] = {}
-        self.layers: dict[str, dict[str, Layer]] = {}  # fixture -> layer -> Layer
+        # fixture -> layer -> stack of effects on that layer, top (most recent) first
+        self.layers: dict[str, dict[str, list[Layer]]] = {}
+        # fixture -> (level 0..1, rgb or None) actually being output, for the panel
+        self.output: dict[str, tuple[float, tuple[int, int, int] | None]] = {}
         self.autorun = True                      # tests drive tick() by hand
         self._task: asyncio.Task | None = None
         self._listeners: dict[str, list[Callable[[], None]]] = {}
@@ -179,20 +181,25 @@ class EffectEngine:
         return effect is not None and not effect.stopping
 
     def fixture_effects(self, name: str) -> list[str]:
-        """Effects driving a fixture, intensity layer first."""
-        layers = self.layers.get(name, {})
-        keys = [layers[layer].key for layer in LAYERS if layer in layers]
+        """Effects on top of a fixture's layers (what it shows), intensity first."""
+        stacks = self.layers.get(name, {})
+        keys = [stacks[layer][0].key for layer in LAYERS if stacks.get(layer)]
         return list(dict.fromkeys(keys))
 
     @property
     def owner(self) -> dict[str, str]:
-        """fixture -> driving effect(s), for display ("a, b" when layered)."""
-        return {name: ", ".join(self.fixture_effects(name))
-                for name in self.layers if self.layers[name]}
+        """fixture -> effect(s) it shows, for display ("a, b" when layered)."""
+        return {name: ", ".join(keys) for name in self.layers
+                if (keys := self.fixture_effects(name))}
 
     def owned_fixtures(self, key: str) -> list[str]:
-        return [name for name, layers in self.layers.items()
-                if any(layer.key == key for layer in layers.values())]
+        """Fixtures where `key` is on top of a layer (i.e. what they show)."""
+        return [name for name in self.layers if key in self.fixture_effects(name)]
+
+    def _fixtures_with(self, key: str) -> list[str]:
+        """Fixtures with `key` anywhere in a layer stack."""
+        return [name for name, stacks in self.layers.items()
+                if any(layer.key == key for stack in stacks.values() for layer in stack)]
 
     def expand_targets(self, entries: list) -> list[str]:
         """Fixture names for a preset's targets, groups expanded, in order, no repeats.
@@ -235,27 +242,37 @@ class EffectEngine:
     # ---- control ------------------------------------------------------------
 
     def _take(self, name: str, layer_name: str, key: str, now: float, fade: float) -> None:
-        """Give `key` the layer of a fixture, crossfading from whoever had it."""
-        layers = self.layers.setdefault(name, {})
-        current = layers.get(layer_name)
-        if current is not None and current.key == key:
+        """Put `key` on top of a fixture's layer, crossfading from what was showing."""
+        stack = self.layers.setdefault(name, {}).setdefault(layer_name, [])
+        if stack and stack[0].key == key:
             return
-        prev = current.key if current is not None else None
-        layers[layer_name] = Layer(key=key, since=now, fade=fade, prev=prev)
+        previous = stack[0].key if stack else None
+        stack[:] = [layer for layer in stack if layer.key != key]
+        stack.insert(0, Layer(key=key, since=now, fade=fade))
         fixture = self.fixtures[name]
         fixture.cancel_fade()
-        self._notify(prev)
+        self._notify(previous)
         fixture.async_write_ha_state_if_added()
 
-    def _drop(self, name: str, layer_name: str) -> None:
-        """Remove a layer; a fixture without layers goes back to its normal state."""
-        layers = self.layers.get(name)
-        if not layers or layer_name not in layers:
+    def _drop(self, name: str, layer_name: str, key: str) -> None:
+        """Take `key` out of a fixture's layer stack; whatever is beneath shows again.
+
+        A fixture left with no effects at all goes back to its normal state.
+        """
+        stacks = self.layers.get(name)
+        if not stacks or layer_name not in stacks:
             return
-        del layers[layer_name]
+        stack = stacks[layer_name]
+        was_top = bool(stack) and stack[0].key == key
+        stack[:] = [layer for layer in stack if layer.key != key]
+        if not stack:
+            del stacks[layer_name]
+        elif was_top:
+            self._notify(stack[0].key)
         fixture = self.fixtures.get(name)
-        if not layers:
+        if not stacks:
             del self.layers[name]
+            self.output.pop(name, None)
             if fixture is not None:
                 fixture.write_effect_values(fixture.normal_values())
         if fixture is not None:
@@ -314,10 +331,10 @@ class EffectEngine:
         effect.preset = preset
         layer_name = effect_layer(preset)
         wanted = set(self._targets(preset))
-        for name in self.owned_fixtures(key):
-            for lname, layer in list(self.layers.get(name, {}).items()):
-                if layer.key == key and (name not in wanted or lname != layer_name):
-                    self._drop(name, lname)
+        for name in self._fixtures_with(key):
+            for lname in list(self.layers.get(name, {})):
+                if name not in wanted or lname != layer_name:
+                    self._drop(name, lname, key)
         for name in self._targets(preset):
             self._take(name, layer_name, key, now, 0.3)
             effect.claimed.add(name)
@@ -345,10 +362,11 @@ class EffectEngine:
     @callback
     def release_fixture(self, name: str) -> None:
         """Manual control of a fixture: it leaves every effect driving it."""
-        layers = self.layers.pop(name, None)
-        if not layers:
+        stacks = self.layers.pop(name, None)
+        self.output.pop(name, None)
+        if not stacks:
             return
-        for key in {layer.key for layer in layers.values()}:
+        for key in {layer.key for stack in stacks.values() for layer in stack}:
             self._notify(key)
         fixture = self.fixtures.get(name)
         if fixture is not None:
@@ -367,6 +385,7 @@ class EffectEngine:
         self._node_jobs.clear()
         self.running.clear()
         self.layers.clear()
+        self.output.clear()
 
     # ---- frames -------------------------------------------------------------
 
@@ -409,87 +428,82 @@ class EffectEngine:
             if effect.stopping and effect.stop_weight(now) <= 0.0:
                 self._finish(key)
 
-    def _layer_value(self, layer: Layer | None, name: str,
-                     frames: dict[str, dict[str, FixtureFrame]], now: float):
-        """(frame, master level, stop weight) of the effect behind a layer, or None."""
-        if layer is None:
-            return None
-        effect = self.running.get(layer.key)
-        frame = frames.get(layer.key, {}).get(name)
-        if effect is None or frame is None:
-            return None
-        return frame, effect.level, effect.stop_weight(now)
-
     def _write_fixture(self, name: str, frames, now: float) -> None:
+        """Combine a fixture's layer stacks into channel values and write them."""
         fixture = self.fixtures.get(name)
-        layers = self.layers.get(name, {})
+        stacks = self.layers.get(name, {})
         if fixture is None:
             self.layers.pop(name, None)
             return
 
-        base_level = fixture.normal_level()
-
-        def prev_value(layer: Layer):
-            if layer.prev is None or layer.fade_weight(now) >= 1.0:
-                layer.prev = None
-                return None
-            return self._layer_value(Layer(layer.prev, 0, 0), name, frames, now)
-
-        # Intensity: from the intensity layer, else the colour effect's master level.
-        level = base_level
-        i_layer = layers.get(INTENSITY)
-        i_val = self._layer_value(i_layer, name, frames, now)
-        c_layer = layers.get(COLOR)
-        c_val = self._layer_value(c_layer, name, frames, now)
-        # A layer whose effect has gone (stopped elsewhere) just disappears.
-        if i_layer is not None and i_val is None:
-            layers.pop(INTENSITY, None)
-        if c_layer is not None and c_val is None:
-            layers.pop(COLOR, None)
-
-        if i_val is not None:
-            frame, master, stop_w = i_val
-            target = frame.level * master
-            prev = prev_value(i_layer)
-            start = prev[0].level * prev[1] * prev[2] + base_level * (1 - prev[2]) \
-                if prev is not None else base_level
-            level = _lerp(base_level, _lerp(start, target, i_layer.fade_weight(now)), stop_w)
-        elif c_val is not None:
-            _, master, stop_w = c_val
-            level = _lerp(base_level, _lerp(base_level, master, c_layer.fade_weight(now)), stop_w)
-
-        # Colour: blend the fixture's own colour (or the effect it took over from)
-        # into the colour layer's colour.
-        values = fixture.effect_values(level, None)
-        if c_val is not None:
-            frame, _, stop_w = c_val
-            prev = prev_value(c_layer)
-            if prev is not None and prev[0].rgb is not None:
-                start_values = _blend(values, fixture.effect_values(level, prev[0].rgb), prev[2])
-            else:
-                start_values = values
-            colored = fixture.effect_values(level, frame.rgb)
-            values = _blend(values, _blend(start_values, colored, c_layer.fade_weight(now)), stop_w)
-
-        if i_val is None and c_val is None:
-            # Every effect behind this fixture has gone; back to normal.
+        # Effects that have gone, or no longer include this fixture, drop out.
+        for lname in list(stacks):
+            stacks[lname] = [layer for layer in stacks[lname]
+                             if layer.key in self.running and name in frames.get(layer.key, {})]
+            if not stacks[lname]:
+                del stacks[lname]
+        if not stacks:
             self.layers.pop(name, None)
+            self.output.pop(name, None)
             fixture.write_effect_values(fixture.normal_values())
             fixture.async_write_ha_state_if_added()
             return
-        fixture.write_effect_values(values)
+
+        base_level = fixture.normal_level()
+        istack = stacks.get(INTENSITY, [])
+        cstack = stacks.get(COLOR, [])
+
+        def weight(layer: Layer) -> float:
+            """How much of this effect shows over what is beneath it."""
+            return layer.fade_weight(now) * self.running[layer.key].stop_weight(now)
+
+        # Each effect is blended over everything beneath it in its stack, so fading
+        # one out (or in) reveals (or covers) the next one down.
+        def color_level(i: int) -> float:
+            # Without an intensity effect, a colour effect shows at its master level.
+            if i >= len(cstack):
+                return base_level
+            layer = cstack[i]
+            return _lerp(color_level(i + 1), self.running[layer.key].level, weight(layer))
+
+        def intensity(i: int) -> float:
+            if i >= len(istack):
+                return color_level(0)
+            layer = istack[i]
+            target = frames[layer.key][name].level * self.running[layer.key].level
+            return _lerp(intensity(i + 1), target, weight(layer))
+
+        level = intensity(0)
+
+        def values_at(i: int) -> list[float]:
+            if i >= len(cstack):
+                return fixture.effect_values(level, None)  # the fixture's own colour
+            layer = cstack[i]
+            colored = fixture.effect_values(level, frames[layer.key][name].rgb)
+            return _blend(values_at(i + 1), colored, weight(layer))
+
+        fixture.write_effect_values(values_at(0))
+
+        # What it looks like, for the panel's live view.
+        def rgb_at(i: int):
+            if i >= len(cstack):
+                return fixture.display_rgb()
+            layer = cstack[i]
+            below = rgb_at(i + 1) or (255, 255, 255)
+            top = frames[layer.key][name].rgb
+            w = weight(layer)
+            return tuple(round(below[k] + (top[k] - below[k]) * w) for k in range(3))
+
+        self.output[name] = (level, rgb_at(0))
 
     def _finish(self, key: str) -> None:
         self.running.pop(key, None)
         if key in self._remove_when_done:
             self._remove_when_done.discard(key)
             self.presets.pop(key, None)
-        for name in list(self.layers):
-            for lname, layer in list(self.layers.get(name, {}).items()):
-                if layer.prev == key:
-                    layer.prev = None
-                if layer.key == key:
-                    self._drop(name, lname)
+        for name in self._fixtures_with(key):
+            for lname in list(self.layers.get(name, {})):
+                self._drop(name, lname, key)
         self._notify(key)
 
     def tick_from_node(self) -> None:

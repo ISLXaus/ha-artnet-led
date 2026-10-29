@@ -328,7 +328,7 @@ async def test_transition_overrides_preset_fade(hass, running):
     effect = {**CHASE, "params": {"speed": 60, "fade_in": 5}}
     _, engine, _ = await running(effect)
     await _turn(hass, "turn_on", "light.fx_chase", transition=0)
-    assert engine.layers["chase_1"]["intensity"].fade == 0
+    assert engine.layers["chase_1"]["intensity"][0].fade == 0
 
 
 async def test_last_started_effect_wins(hass, running):
@@ -341,9 +341,11 @@ async def test_last_started_effect_wins(hass, running):
     assert engine.owner == {"chase_1": "fx_chase", "chase_2": "fx_chase",
                             "chase_3": "fx_wave", "chase_4": "fx_wave"}
     assert hass.states.get("light.fx_chase").attributes["driving"] == ["chase_1", "chase_2"]
-    # Stopping the wave hands its fixtures back to their own state, not to the chase.
+    # Stopping the wave reveals the chase still running underneath.
     await _turn(hass, "turn_off", "light.fx_wave")
-    assert "chase_3" not in engine.owner and engine.owner["chase_1"] == "fx_chase"
+    assert engine.owner["chase_3"] == "fx_chase" and engine.owner["chase_1"] == "fx_chase"
+    assert hass.states.get("light.fx_chase").attributes["driving"] == [
+        "chase_1", "chase_2", "chase_3", "chase_4"]
 
 
 async def test_colour_effect_keeps_dummy_channels(hass, running):
@@ -504,12 +506,58 @@ async def test_takeover_crossfades_from_the_previous_effect(hass, running):
     _, engine, values = await running(LEVEL_50, LEVEL_20)
     await _turn(hass, "turn_on", "light.fx_half")
     await _turn(hass, "turn_on", "light.fx_low")  # 2 s fade from 50% to 20%
-    t0 = engine.layers["wash"]["intensity"].since
+    t0 = engine.layers["wash"]["intensity"][0].since
     engine.tick(t0 + 1)
     assert values("wash")[0] == 89  # 35% = halfway between 50% and 20%
     engine.tick(t0 + 2.5)
     assert values("wash")[0] == 51  # 20%
-    assert engine.layers["wash"]["intensity"].prev is None
+
+
+async def test_stopping_the_top_effect_returns_to_the_one_beneath(hass, running):
+    """Regression: stopping faded to the fixture's own state, then snapped to the effect under it."""
+    low = {**LEVEL_20, "params": {**LEVEL_20["params"], "fade_in": 0, "fade_out": 2}}
+    _, engine, values = await running(LEVEL_50, low)
+    await _turn(hass, "turn_on", "light.fx_half")
+    await _turn(hass, "turn_on", "light.fx_low")
+    t0 = engine.layers["wash"]["intensity"][0].since
+    engine.tick(t0)
+    assert values("wash")[0] == 51  # 20% on top
+    engine.stop("fx_low", now=t0)
+    engine.tick(t0 + 1)
+    assert values("wash")[0] == 89  # halfway back up to the 50% underneath
+    engine.tick(t0 + 2.5)
+    assert values("wash")[0] == 128  # the 50% effect, no snap
+    assert engine.owner == {"wash": "fx_half"}
+
+
+async def test_stopping_intensity_over_colour_fades_to_the_colour(hass, running):
+    """Regression: stopping an intensity effect layered on a colour effect went dark first."""
+    half = {**LEVEL_50, "params": {**LEVEL_50["params"], "fade_out": 2}}
+    _, engine, values = await running(half, RAINBOW)
+    await _turn(hass, "turn_on", "light.fx_rainbow")
+    await _turn(hass, "turn_on", "light.fx_half")
+    t0 = engine.running["fx_rainbow"].last_tick
+    engine.tick(t0)
+    assert values("wash")[0] == 128  # 50% from the intensity effect, red from the rainbow
+    engine.stop("fx_half", now=t0)
+    engine.tick(t0 + 1)
+    assert values("wash")[0] == 191  # halfway to the rainbow's own 100%, not towards 0
+    engine.tick(t0 + 2.5)
+    assert values("wash")[0] == 255
+    assert engine.owner == {"wash": "fx_rainbow"}
+
+
+async def test_live_output_for_the_panel(hass, running):
+    _, engine, _ = await running(LEVEL_50, RAINBOW)
+    await _turn(hass, "turn_on", "light.fx_rainbow")
+    await _turn(hass, "turn_on", "light.fx_half")
+    t0 = engine.running["fx_rainbow"].last_tick
+    engine.tick(t0 + 1 / 3)
+    level, rgb = engine.output["wash"]
+    assert round(level, 2) == 0.5 and rgb == (0, 255, 0)
+    await _turn(hass, "turn_off", "light.fx_half", transition=0)
+    await _turn(hass, "turn_off", "light.fx_rainbow", transition=0)
+    assert "wash" not in engine.output
 
 
 # ---- frame rate --------------------------------------------------------------------------
@@ -597,3 +645,22 @@ async def test_effect_follows_its_group(hass, running):
     engine.tick(t0 + 0.3)
     assert engine.owner == {"chase_3": "fx_chase"}
     assert values("chase_2") == [0]
+
+
+async def test_output_subscription(hass, running, hass_ws_client):
+    _, engine, _ = await running(RAINBOW)
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": "dmx_lighting/effect/output/subscribe"})
+    assert (await client.receive_json())["success"]
+    assert (await client.receive_json())["event"] == {"fixtures": {}}
+
+    await _turn(hass, "turn_on", "light.fx_rainbow")
+    engine.tick(engine.running["fx_rainbow"].last_tick)  # hue 0 = red
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+    event = (await client.receive_json())["event"]
+    assert event == {"fixtures": {"wash": [1.0, [255, 0, 0]]}}

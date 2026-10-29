@@ -153,7 +153,11 @@ effects:
 
 **Layering intensity and colour.** Each fixture has an *intensity* layer and a *colour* layer, like attributes on a console. Intensity effects drive the intensity layer (and keep the fixture's colour); colour effects drive the colour layer. So one effect of each kind can run on the same fixtures at once — for example a *Chase* over a *Colour fade*: the chase decides which fixtures are lit and how bright, the colour fade decides their colour, each at its own speed. Stop either one and the other carries on.
 
-**Who controls a fixture** works per layer like a console's "latest takes precedence": starting an effect takes its layer over from any other effect on those fixtures, crossfading from it over the new effect's fade-in. Controlling a fixture yourself (turning it on/off, changing colour) releases it from all effects. When an effect stops, its layer fades back to whatever the fixture's own light entity says. A fixture's `dmx_effect` attribute lists the effects driving it. Dummy channels keep their fixed values while effects run; `fixed` fixtures can't be used in effects.
+**Who controls a fixture** works per layer like a console's "latest takes precedence", with effects stacked on each layer: starting an effect puts it on top of its layer on those fixtures, crossfading from what was showing over the new effect's fade-in. When an effect stops it fades out to whatever is underneath — the next effect still running on that layer, or (for intensity) the colour effect's level, or the fixture's own state. Controlling a fixture yourself (turning it on/off, changing colour) releases it from all effects. A fixture's `dmx_effect` attribute lists the effects it is showing.
+
+**Effect targets** can be fixtures or Home Assistant **light groups** (light group helpers, or old-style groups): tick them under *Home Assistant groups* in the fixture picker. A group follows its members — lights added to the group while an effect runs join in, removed ones go back to their own state — and *Expand* replaces it with its fixtures to order them one by one. In YAML a group target is written `group:light.<name>`.
+
+In the Patch tab's list view, the **Output** tile of a fixture an effect is driving shows the effect's live output (marked **FX**) instead of the light entity's state. Dummy channels keep their fixed values while effects run; `fixed` fixtures can't be used in effects.
 
 ## Patch reference
 

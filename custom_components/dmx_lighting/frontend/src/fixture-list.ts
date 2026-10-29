@@ -48,6 +48,26 @@ export class DmxFixtureList extends LitElement {
   @state() private _filter = '';
   @state() private _sort: SortKey = 'address';
   @state() private _desc = false;
+  /** Live output of fixtures an effect is driving: name -> [level 0..1, rgb | null]. */
+  @state() private _effectOut: Record<string, [number, number[] | null]> = {};
+  private _unsubOutput?: Promise<() => Promise<void>>;
+
+  updated(changed: Map<string, unknown>) {
+    if (changed.has('hass') && this.hass && !this._unsubOutput) {
+      this._unsubOutput = this.hass.connection
+        .subscribeMessage<{ fixtures: Record<string, [number, number[] | null]> }>(
+          (msg) => (this._effectOut = msg.fixtures ?? {}),
+          { type: 'dmx_lighting/effect/output/subscribe' }
+        )
+        .catch(() => async () => undefined); // older backend: just show entity states
+    }
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._unsubOutput?.then((unsub) => unsub()).catch(() => undefined);
+    this._unsubOutput = undefined;
+  }
 
   private _rows(): Row[] {
     const rows: Row[] = [];
@@ -136,6 +156,25 @@ export class DmxFixtureList extends LitElement {
    * Updates live because the panel re-renders whenever hass changes.
    */
   private _liveTile(entityId: string | undefined, device: PatchDevice) {
+    // While an effect drives the fixture, show what it actually outputs.
+    const fx = this._effectOut[device.name];
+    if (fx) {
+      const [level, rgbOut] = fx;
+      const [r, g, b] = (rgbOut ?? [255, 255, 255]).map((v) => Math.round(v));
+      const pct = Math.round(level * 100);
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      const ink = pct >= 50 && luminance > 0.6 ? '#000' : '#fff';
+      const effects = (this.hass?.states?.[entityId ?? '']?.attributes?.dmx_effect as string) ?? 'effect';
+      return html`<div
+        class="tile on fx"
+        style="--tile-color: rgb(${r}, ${g}, ${b}); --tile-level: ${pct}%; --tile-ink: ${ink}"
+        title="Driven by ${effects}: ${rgbOut ? `RGB ${r}, ${g}, ${b} · ` : ''}${pct}%"
+      >
+        <span class="fill"></span>
+        <span class="pct">${pct}%</span>
+        <span class="fx-badge">FX</span>
+      </div>`;
+    }
     const st = entityId ? this.hass?.states?.[entityId] : undefined;
     if (!st) {
       return html`<div class="tile none" title="No entity yet — Save & Apply">–</div>`;
@@ -544,6 +583,19 @@ export class DmxFixtureList extends LitElement {
       /* Dim backdrop of the same colour, so low levels still show the hue. */
       background: color-mix(in srgb, var(--tile-color) 22%, #111);
       color: #fff;
+    }
+    .tile.fx .fill {
+      transition: height 0.1s linear, background-color 0.1s linear;
+    }
+    .tile .fx-badge {
+      position: absolute;
+      top: 2px;
+      right: 3px;
+      font-size: 0.5rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      color: #fff;
+      text-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
     }
     .tile .fill {
       position: absolute;
