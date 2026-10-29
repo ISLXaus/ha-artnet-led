@@ -56,6 +56,28 @@ def test_chase_moves_one_fixture_at_a_time():
     assert _levels("chase", 4, 2.1, direction="bounce") == [1, 0, 0, 0]
 
 
+def _lit(effect_type, count, phase, **params):
+    levels = _levels(effect_type, count, phase, **params)
+    return levels.index(max(levels))
+
+
+def test_bounce_goes_all_the_way_across_and_back():
+    # Chase over 4 fixtures: out 1-2-3-4, then back 4-3-2-1, then out again.
+    out = [_lit("chase", 4, c + f, direction="bounce") for c in (0,) for f in (0.1, 0.35, 0.6, 0.85)]
+    back = [_lit("chase", 4, 1 + f, direction="bounce") for f in (0.1, 0.35, 0.6, 0.85)]
+    again = [_lit("chase", 4, 2 + f, direction="bounce") for f in (0.1, 0.35, 0.6, 0.85)]
+    assert out == [0, 1, 2, 3] and back == [3, 2, 1, 0] and again == [0, 1, 2, 3]
+
+
+@pytest.mark.parametrize("spread", [360, 180, 90])
+def test_bounce_has_no_jump_at_the_turn(spread):
+    """Regression: bounce flipped every fixture at once, so waves jumped mid-cycle."""
+    for turn in (1.0, 2.0):
+        before = _levels("sine", 6, turn - 0.001, direction="bounce", spread=spread)
+        after = _levels("sine", 6, turn + 0.001, direction="bounce", spread=spread)
+        assert max(abs(a - b) for a, b in zip(before, after)) < 0.02, (before, after)
+
+
 def test_spread_zero_moves_everything_together():
     levels = _levels("sine", 5, 0.5, spread=0)
     assert levels == [1, 1, 1, 1, 1]
@@ -488,3 +510,39 @@ async def test_takeover_crossfades_from_the_previous_effect(hass, running):
     engine.tick(t0 + 2.5)
     assert values("wash")[0] == 51  # 20%
     assert engine.layers["wash"]["intensity"].prev is None
+
+
+# ---- frame rate --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("max_fps", [44, 25])
+async def test_effects_send_at_the_node_frame_rate(hass, hass_storage, max_fps):
+    """Regression: effects ran on their own 30 fps clock, so a 44 fps node sent 30."""
+    import asyncio
+    import time
+
+    patch = _patch({**CHASE, "type": "sine", "params": {"speed": 600, "spread": 90,
+                                                        "fade_in": 0, "fade_out": 0}})
+    patch["nodes"][0]["max_fps"] = max_fps
+    hass_storage[STORAGE_KEY] = {"version": 1, "data": patch}
+    entry = MockConfigEntry(domain=DOMAIN, title="DMX Lighting", data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    engine = hass.data[DOMAIN][DATA_ENGINES][entry.entry_id]
+
+    node = engine.fixtures["chase_1"].channel._parent_node
+    sent = []
+    original = node._send_universe
+    node._send_universe = lambda *args, **kw: (sent.append(time.monotonic()), original(*args, **kw))
+
+    await _turn(hass, "turn_on", "light.fx_chase")
+    await asyncio.sleep(0.3)  # settle
+    sent.clear()
+    await asyncio.sleep(2.0)
+    rate = len(sent) / 2.0
+    assert max_fps - 2 <= rate <= max_fps + 1, f"{rate} frames/s at max_fps {max_fps}"
+
+    await _turn(hass, "turn_off", "light.fx_chase")
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

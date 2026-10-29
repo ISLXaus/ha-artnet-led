@@ -141,7 +141,7 @@ effects:
 | `speed` | 30 | Cycles per minute (0.1–600). Changing it never makes the effect jump. |
 | `size` / `base` | 100 / 0 | Intensity effects move from `base`% up by `size`%. |
 | `spread` | 360 | Degrees of offset across the fixtures: 0 = all together, 360 = one wave across them all. |
-| `direction` | `forward` | `forward`, `reverse` or `bounce` (back and forth). |
+| `direction` | `forward` | `forward`, `reverse` or `bounce` (all the way across, then back along the same path). |
 | `shuffle` / `seed` | off / 0 | Random fixture order; change `seed` for a different order. |
 | `groups` | 1 | Split the fixtures into N parts that each run the whole pattern. |
 | `blocks` | 1 | N fixtures in a row share the same step. |
@@ -195,7 +195,7 @@ nodes:
   - `kinet`: KiNet, sent directly to the node's IP.
 - **host** (required): IP address of the node.
 - **port** (default 6454 for Art-Net, 5568 for sACN, 6038 for KiNet): only change this if you're sure your node uses another port.
-- **max_fps** (default 25): frame rate for fades (1 to 50).
+- **max_fps** (default 25): frames per second sent for fades and effects (1 to 50). Effects are computed for every frame the node sends, so the output really runs at this rate.
 - **refresh_every** (default 120): seconds between resends when nothing is fading; 0 disables.
 - **transition** (optional, default 0): default fade time in seconds for the node's fixtures that don't set their own. A fixture's own transition — including `0` — always wins. In the node settings, *Make all use this default* clears the fixture-level values so every fixture on the node follows it.
 - **priority** (default 100; sACN only): E1.31 priority (0-200). Receivers merge multiple sources by priority; higher wins.

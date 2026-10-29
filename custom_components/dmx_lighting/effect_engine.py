@@ -1,9 +1,10 @@
 """Runs effect presets on fixtures, frame by frame.
 
-One loop drives every running effect at EFFECT_FPS. Each frame it computes the effects
-(effects.py), turns them into channel values through the fixture's own channel layout
-(so dimmers, RGB/RGBW, custom layouts and dummy channels all work) and writes them
-straight to the pyartnet channel; pyartnet sends them at the node's own frame rate.
+Frames are driven by the nodes themselves: while effects run, the engine is a job in
+each driven node's pyartnet send loop, so every frame a node sends (at its max_fps)
+is freshly computed. Each frame computes the effects (effects.py), turns them into
+channel values through the fixture's own channel layout (so dimmers, RGB/RGBW, custom
+layouts and dummy channels all work) and writes them to the pyartnet channels.
 
 Layers: a fixture has an intensity layer and a colour layer, like attributes on a
 console. Intensity effects (chase, wave, ...) drive the intensity layer and colour
@@ -40,7 +41,33 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Housekeeping rate when no node is driving the frames (e.g. an effect whose fixtures
+# have all been taken over), so fades still finish.
 EFFECT_FPS = 30
+# Several nodes call tick() in the same frame; skip repeats closer together than this.
+MIN_TICK_INTERVAL = 0.002
+
+
+class _NodeJob:
+    """Looks like a pyartnet fade job, so the node's send loop computes effect frames."""
+
+    def __init__(self, engine: "EffectEngine", node) -> None:
+        self.engine = engine
+        self.node = node
+        self.is_done = False
+
+    def process(self) -> None:
+        if not self.engine.running:
+            self.is_done = True  # the node loop removes the job and calls fade_complete
+            return
+        self.engine.tick_from_node()
+
+    def fade_complete(self) -> None:
+        if self.engine._node_jobs.get(id(self.node)) is self:
+            del self.engine._node_jobs[id(self.node)]
+
+    def cancel(self) -> None:  # pyartnet API compatibility
+        self.is_done = True
 
 INTENSITY = "intensity"
 COLOR = "color"
@@ -113,6 +140,8 @@ class EffectEngine:
         self._listeners: dict[str, list[Callable[[], None]]] = {}
         # Temporary presets (panel previews) dropped once they have faded out.
         self._remove_when_done: set[str] = set()
+        self._node_jobs: dict[int, _NodeJob] = {}  # id(node) -> job in its send loop
+        self._last_tick: float | None = None
 
     # ---- setup --------------------------------------------------------------
 
@@ -250,6 +279,7 @@ class EffectEngine:
             self._take(name, layer_name, key, now, 0.3)
         self._notify(key)
         self.tick(now)
+        self._ensure_loop()
 
     @callback
     def stop_and_remove(self, key: str, fade_out: float | None = None) -> None:
@@ -286,6 +316,11 @@ class EffectEngine:
         if self._task is not None:
             self._task.cancel()
             self._task = None
+        for job in list(self._node_jobs.values()):
+            job.is_done = True
+            if job in job.node._process_jobs:
+                job.node._process_jobs.remove(job)
+        self._node_jobs.clear()
         self.running.clear()
         self.layers.clear()
 
@@ -295,6 +330,7 @@ class EffectEngine:
     def tick(self, now: float | None = None) -> None:
         """Advance every running effect to `now` and write the fixtures they drive."""
         now = time.monotonic() if now is None else now
+        self._last_tick = now
 
         # 1. Each running effect's frame for all of its fixtures (also ones another
         #    effect has taken over, so a crossfade from it has a value to start from).
@@ -403,20 +439,42 @@ class EffectEngine:
                     self._drop(name, lname)
         self._notify(key)
 
-    def _ensure_loop(self) -> None:
-        if not self.autorun or (self._task is not None and not self._task.done()):
+    def tick_from_node(self) -> None:
+        """Called from a node's send loop, once per frame it sends."""
+        now = time.monotonic()
+        if self._last_tick is not None and now - self._last_tick < MIN_TICK_INTERVAL:
             return
-        self._task = self._create_task(self._run(), "dmx_lighting effects")
+        try:
+            self.tick(now)
+        except Exception:  # never let one bad frame break the node's send loop
+            log.exception("Error computing effect frame")
+
+    def _ensure_loop(self) -> None:
+        if not self.autorun:
+            return
+        # Hook into the send loop of every node with a driven fixture.
+        for name in self.layers:
+            fixture = self.fixtures.get(name)
+            node = getattr(getattr(fixture, "channel", None), "_parent_node", None)
+            if node is None or id(node) in self._node_jobs:
+                continue
+            job = _NodeJob(self, node)
+            self._node_jobs[id(node)] = job
+            node._process_jobs.append(job)
+            node._process_task.start()
+        if self._task is None or self._task.done():
+            self._task = self._create_task(self._run(), "dmx_lighting effects")
 
     async def _run(self) -> None:
+        """Housekeeping: drives frames only while no node is doing so."""
         interval = 1.0 / EFFECT_FPS
         try:
             while self.running:
-                started = time.monotonic()
-                try:
-                    self.tick(started)
-                except Exception:  # never let one bad frame kill the loop
-                    log.exception("Error computing effect frame")
-                await asyncio.sleep(max(0.0, interval - (time.monotonic() - started)))
+                if not self._node_jobs:
+                    try:
+                        self.tick()
+                    except Exception:
+                        log.exception("Error computing effect frame")
+                await asyncio.sleep(interval)
         finally:
             self._task = None

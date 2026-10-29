@@ -72,15 +72,19 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
         [StaticPathConfig(FRONTEND_STATIC_PATH, str(dist_path), cache_headers=False)]
     )
 
-    from homeassistant.loader import async_get_integration
+    # Cache-bust with the bundle's content, not the integration version: browsers (and
+    # HA's service worker) otherwise keep running an old panel after an update that
+    # didn't bump the version.
+    import hashlib
 
-    integration = await async_get_integration(hass, DOMAIN)
+    bundle = await hass.async_add_executor_job((dist_path / "panel.js").read_bytes)
+    bundle_hash = hashlib.sha256(bundle).hexdigest()[:12]
 
     await async_register_panel(
         hass,
         frontend_url_path=PANEL_URL_PATH,
         webcomponent_name=PANEL_WEBCOMPONENT_NAME,
-        module_url=f"{FRONTEND_STATIC_PATH}/panel.js?v={integration.version}",
+        module_url=f"{FRONTEND_STATIC_PATH}/panel.js?v={bundle_hash}",
         sidebar_title=PANEL_TITLE,
         sidebar_icon=PANEL_ICON,
         require_admin=True,

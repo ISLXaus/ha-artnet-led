@@ -163,11 +163,13 @@ export function fixtureSlots(count: number, params: EffectParams): Slot[] {
 const mod1 = (x: number) => ((x % 1) + 1) % 1;
 
 export function fixturePhase(phase: number, slot: Slot, params: EffectParams): number {
-  let position = slot.position;
-  if (params.direction === 'bounce' && Math.floor(phase) % 2 === 1) {
-    position = (slot.count - 1 - slot.index) / slot.count;
+  if (params.direction === 'bounce') {
+    // Every other cycle plays backwards: across and back along the same path.
+    const cycle = Math.floor(phase);
+    const frac = phase - cycle;
+    phase = cycle % 2 === 0 ? frac : 1 - frac;
   }
-  return mod1(phase - (position * p(params, 'spread')) / 360);
+  return mod1(phase - (slot.position * p(params, 'spread')) / 360);
 }
 
 // ---- waveforms and colours ------------------------------------------------------------

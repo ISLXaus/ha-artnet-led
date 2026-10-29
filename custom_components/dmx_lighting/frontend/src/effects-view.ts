@@ -432,15 +432,20 @@ export class DmxEffectsView extends LitElement {
   }
 
   private _renderPreview(effect: EffectPreset) {
+    // The effect flows through the fixtures in `order` (shuffled / reversed), but the
+    // strip shows them as picked, i.e. where they are, so shuffle and reverse are visible.
     const order = orderFixtures(effect.fixtures, effect.params);
-    const frames = computeFrame(effect.type, effect.params, order.length, this._phase);
+    const flowFrames = computeFrame(effect.type, effect.params, order.length, this._phase);
+    const byFlow = new Map(order.map((n, i) => [n, flowFrames[i]]));
+    const shown = effect.fixtures.filter((n) => byFlow.has(n));
+    const frames = shown.map((n) => byFlow.get(n)!);
     // Combine with an effect on the other layer, as the engine does on the fixtures.
     const other = this._layerWith(effect);
     if (other) {
       const otherOrder = orderFixtures(other.fixtures, other.params);
       const otherFrames = computeFrame(other.type, other.params, otherOrder.length, this._phaseOther);
       const byName = new Map(otherOrder.map((n, i) => [n, otherFrames[i]]));
-      order.forEach((name, i) => {
+      shown.forEach((name, i) => {
         const o = byName.get(name);
         if (!o) return;
         frames[i] = effectLayer(effect.type) === 'intensity'
@@ -481,9 +486,9 @@ export class DmxEffectsView extends LitElement {
           </label>
         </div>
         ${this._liveError ? html`<div class="live-error">${this._liveError}</div>` : nothing}
-        ${order.length
+        ${shown.length
           ? html`<div class="strip">
-              ${order.map((name, i) => {
+              ${shown.map((name, i) => {
                 const f = frames[i];
                 const rgb = f.rgb ?? [255, 214, 150];
                 const c = rgb.map((v) => Math.round(v * f.level));

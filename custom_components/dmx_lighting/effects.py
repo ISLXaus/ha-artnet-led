@@ -102,11 +102,13 @@ def fixture_slots(count: int, params: dict) -> list[Slot]:
 
 def fixture_phase(phase: float, slot: Slot, params: dict) -> float:
     """Where in its cycle (0..1) a fixture is, including spread and direction."""
-    position = slot.position
-    if params.get("direction") == "bounce" and int(math.floor(phase)) % 2 == 1:
-        # Every other cycle the pattern travels back the other way.
-        position = (slot.count - 1 - slot.index) / slot.count
-    offset = position * float(param(params, "spread")) / 360.0
+    if params.get("direction") == "bounce":
+        # Play every other cycle backwards: the pattern travels all the way across,
+        # then retraces the same path back, with no jump at the turn.
+        cycle = math.floor(phase)
+        frac = phase - cycle
+        phase = frac if cycle % 2 == 0 else 1.0 - frac
+    offset = slot.position * float(param(params, "spread")) / 360.0
     return (phase - offset) % 1.0
 
 

@@ -148,3 +148,19 @@ async def test_ws_validate_rejects_overlap(hass, hass_ws_client):
     assert response["result"]["valid"] is False
     codes = {e["code"] for e in response["result"]["errors"]}
     assert "channel_overlap" in codes
+
+
+async def test_panel_url_changes_with_the_bundle(hass):
+    """The panel script is cache-busted by its content, so updates load without a version bump."""
+    import hashlib
+    from pathlib import Path
+
+    from homeassistant.setup import async_setup_component
+
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+    panel = hass.data["frontend_panels"]["dmx-patch"]
+    module_url = panel.config["_panel_custom"]["module_url"]
+    bundle = Path(__file__).parent.parent / "custom_components/dmx_lighting/frontend/dist/panel.js"
+    expected = hashlib.sha256(bundle.read_bytes()).hexdigest()[:12]
+    assert module_url.endswith(f"panel.js?v={expected}")

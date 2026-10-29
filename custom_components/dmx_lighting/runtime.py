@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +33,57 @@ from homeassistant.const import CONF_HOST as CONF_NODE_HOST
 from homeassistant.const import CONF_PORT as CONF_NODE_PORT
 
 log = logging.getLogger(__name__)
+
+
+def pace_node(node) -> None:
+    """Make the node really send at its max_fps.
+
+    pyartnet's send loop sleeps a full frame *after* processing, so it always runs a
+    little slower than max_fps. This replaces it with the same loop paced against
+    fixed deadlines.
+    """
+    node._process_task.coro = lambda: _paced_process_values(node)
+
+
+async def _paced_process_values(node) -> None:
+    """pyartnet's BaseNode._process_values_task, with drift-free frame timing."""
+    # Let several updates scheduled together start in the same frame (as pyartnet does).
+    await asyncio.sleep(0.01)
+    interval = node._process_every
+    next_frame = time.monotonic()
+
+    idle_ct = 0
+    while idle_ct < 10:
+        idle_ct += 1
+
+        to_remove = []
+        for job in node._process_jobs:
+            job.process()
+            idle_ct = 0
+            if job.is_done:
+                to_remove.append(job)
+
+        for universe in node._universes:
+            if not universe._data_changed:
+                continue
+            universe.send_data()
+            idle_ct = 0
+
+        if to_remove:
+            for job in to_remove:
+                node._process_jobs.remove(job)
+                job.fade_complete()
+
+        if not idle_ct:
+            node._send_synchronization()
+
+        next_frame += interval
+        delay = next_frame - time.monotonic()
+        if delay < -interval:
+            # Fell well behind (busy event loop): carry on from now instead of bursting.
+            next_frame = time.monotonic()
+            delay = 0.0
+        await asyncio.sleep(max(0.0, delay))
 
 
 class NodeConflictError(Exception):
@@ -175,6 +227,7 @@ class DmxRuntime:
 
     @staticmethod
     async def _start_node(node, refresh_interval):
+        pace_node(node)
         await node.__aenter__()
         if not refresh_interval:
             await node.stop_refresh()
