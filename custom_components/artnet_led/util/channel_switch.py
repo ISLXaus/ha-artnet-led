@@ -27,6 +27,18 @@ def validate(channel_setup: Union[str, list], type: str):
             raise IllegalChannelSetup(f"The letter '{channel}' is not allowed for type {type}")
 
 
+def is_fixed_value(channel) -> bool:
+    """True for a dummy channel: a fixed DMX value (0-255) instead of a light function."""
+    return isinstance(channel, int) and not isinstance(channel, bool)
+
+
+def off_values(channel_setup, channel_size: int, width: int) -> list[int]:
+    """Values for a light that is off: 0 everywhere except dummy channels, which hold their value."""
+    if not channel_setup or isinstance(channel_setup, str):
+        return [0] * width
+    return [int(c) * channel_size if is_fixed_value(c) else 0 for c in channel_setup]
+
+
 def _default_calculation_function(channel_value):
     return channel_value if isinstance(channel_value, int) else 0
 
@@ -120,6 +132,9 @@ def from_values(channel_setup: str, channel_size: int, values: list[int],
     for index, channel in enumerate(channel_setup):
         value = values[index]
 
+        if not isinstance(channel, str):
+            continue  # fixed value (dummy channel), carries no light state
+
         if channel == "d":
             brightness = value
             break
@@ -137,6 +152,9 @@ def from_values(channel_setup: str, channel_size: int, values: list[int],
 
     # Get values
     for index, channel in enumerate(channel_setup):
+        if not isinstance(channel, str):
+            continue  # fixed value (dummy channel)
+
         value = floor(values[index] / channel_size)
 
         if channel == "r":

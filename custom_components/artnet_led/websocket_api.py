@@ -147,8 +147,19 @@ async def ws_patch_export(hass: HomeAssistant, connection, msg) -> None:
     """Serialize a patch document (usually the panel's working copy) to YAML."""
     import yaml
 
-    text = yaml.safe_dump(
-        _strip_ids(msg["patch"]), sort_keys=False, default_flow_style=False, indent=2
+    class _Dumper(yaml.SafeDumper):
+        """Short lists of plain values (channel_setup, channel_labels) stay on one line."""
+
+        def represent_list(self, data):
+            flow = bool(data) and all(
+                isinstance(v, (str, int, float, bool)) or v is None for v in data)
+            return self.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=flow)
+
+    _Dumper.add_representer(list, _Dumper.represent_list)
+
+    text = yaml.dump(
+        _strip_ids(msg["patch"]), Dumper=_Dumper, sort_keys=False,
+        default_flow_style=False, indent=2, allow_unicode=True,
     )
     connection.send_result(msg["id"], {"yaml": text})
 

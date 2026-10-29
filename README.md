@@ -50,6 +50,29 @@ Since v0.2.0 the integration ships a **DMX Patch** panel in the Home Assistant s
 
 The panel appears once the *DMX Patch* config entry exists — created by adding the integration (installation step 10), or automatically by the first *Save & Apply* for YAML users. The patch itself is stored in `.storage/artnet_led.patch`.
 
+### Custom fixtures and dummy channels
+
+Many fixtures have channels that aren't part of the light itself — a *mode*, *strobe*, *macro* or *fan* channel that has to sit at a particular value for the fixture to work. In the fixture dialog, tick **Custom channel layout** to build the fixture channel by channel:
+
+* **Light channels** (dimmer, red, green, blue, white, cool/warm white, color temp, hue, saturation, X/Y — whatever the fixture type supports) follow the light entity.
+* **Dummy channels** have an optional **label** (e.g. `Mode`, `Strobe`, up to 32 characters) and a **fixed value** from 0 to 255. That value is sent from the moment the patch is applied and held there — while the light is off, while it fades, and while its color or brightness changes. With 16-bit (or wider) channel sizes the value is the coarse byte, like the other channels.
+
+Use ↑/↓ to put channels in the fixture's order and ✕ to remove one. The type still decides what kind of light entity you get (e.g. `rgb` with a Mode channel is an RGB light); a `dimmer` can also have dummy channels, and a `fixed` fixture is made only of dummy channels. `binary` fixtures are always a single channel.
+
+In the universe grid dummy channels are hatched and show their label and value. They count towards the fixture's footprint, so overlaps and the 512-channel limit include them. Validation (server-side, on save and import) checks that values are whole numbers 0–255, that each light channel fits the type, and that labels are text.
+
+In the patch (and its YAML export) a custom layout is the regular [`channel_setup`](#channel_setup) list — numbers are dummy channels — plus a panel-only `channel_labels` list in the same order (`null` for unlabeled channels):
+
+```yaml
+- channel: 1
+  name: wash_1
+  type: rgb
+  channel_setup: [d, r, g, b, 42, 200]
+  channel_labels: [null, null, null, null, Mode, Strobe]
+```
+
+The same `channel_setup` works in YAML configuration; `channel_labels` is only used by the panel.
+
 ### Backup / edit as YAML
 
 The **YAML** button in the panel header opens the whole patch as YAML text: copy or download it as a backup, or paste/load an edited version and press *Load into editor*. Imports are parsed and validated server-side (JSON works too), loaded as unsaved changes for review, and only take effect once you *Save & Apply*.
@@ -211,16 +234,16 @@ _Staticly sets the green channel on 50% brightness_
 - `U` = saturation
 - `x` = X value in XY color mode
 - `y` = Y value in XY color mode
-- [`0`, `255`] = static value between the range [0, 255] 
+- [`0`, `255`] = static value between the range [0, 255] (a "dummy" channel, e.g. a fixture's mode or strobe channel; it keeps this value while the light is off, too)
 
 
 #### Compatibility
 
 | Type       |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       |     |     |           |     |     | Default value |
 |------------|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-------|-------|-----|-----|-----------|-----|-----|---------------|
-| fixed      |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       |     |     | `[0,255]` |     |     | `0`           |
-| binary     |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       |     |     | `[0,255]` |     |     | `0`           |
-| dimmer     |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       |     |     | `[0,255]` |     |     | `0`           |
+| fixed      |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       |     |     | `[0,255]` |     |     | `[255]`       |
+| binary     |     |     |     |     |     |     |     |     |     |     |     |     |     |       |       |     |     |           |     |     | (1 channel)   |
+| dimmer     | `d` |     |     |     |     |     |     |     |     |     |     |     |     |       |       |     |     | `[0,255]` |     |     | `d`           |
 | color_temp | `d` | `c` | `C` | `h` | `H` | `t` | `T` |     |     |     |     |     |     |       |       |     |     | `[0,255]` |     |     | `ch`          |
 | rgb        | `d` |     |     |     |     |     |     | `r` | `R` | `g` | `G` | `b` | `B` | `w`\* | `W`\* | `u` | `U` | `[0,255]` |     |     | `rgb`         |
 | rgbw       | `d` |     |     |     |     |     |     | `r` | `R` | `g` | `G` | `b` | `B` | `w`   | `W`   | `u` | `U` | `[0,255]` |     |     | `rgbw`        |

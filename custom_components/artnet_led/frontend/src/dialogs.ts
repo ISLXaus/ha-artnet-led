@@ -7,10 +7,62 @@ import {
   NODE_TYPES,
   CHANNEL_SIZES,
   CORRECTIONS,
+  ALLOWED_FUNCTIONS,
+  FUNCTION_NAMES,
+  MAX_LABEL_LENGTH,
+  ChannelEntry,
+  byteSize,
   footprint,
+  hasCustomSetup,
+  isFixedValue,
   minUniverse,
+  setupEntries,
   uuid,
 } from './model';
+
+/** One row of the custom channel editor. fn is a function letter, or FIXED for a dummy channel. */
+interface ChannelRow {
+  fn: string;
+  value: number;
+  label: string;
+}
+
+const FIXED = '#fixed';
+
+function rowsFromDevice(device: PatchDevice): ChannelRow[] {
+  return setupEntries(device).map((entry, i) => ({
+    fn: isFixedValue(entry) ? FIXED : entry,
+    value: isFixedValue(entry) ? entry : 0,
+    label: device.channel_labels?.[i] ?? '',
+  }));
+}
+
+/** Problem with a row for the given type, or '' if it is fine. Mirrors channel_setup_errors(). */
+function rowProblem(row: ChannelRow, type: string): string {
+  if (row.fn === FIXED) {
+    if (!Number.isInteger(row.value) || row.value < 0 || row.value > 255) return 'Value must be 0–255';
+    return '';
+  }
+  if (!ALLOWED_FUNCTIONS[type]?.includes(row.fn)) return `Not available for ${type}`;
+  return '';
+}
+
+/**
+ * channel_setup + channel_labels for a set of rows. Uses the compact string form
+ * ("drgb") when there are no dummy channels or labels, so plain layouts stay
+ * YAML-compatible and readable.
+ */
+function rowsToSetup(rows: ChannelRow[]): Pick<PatchDevice, 'channel_setup' | 'channel_labels'> {
+  if (!rows.length) return { channel_setup: null, channel_labels: null };
+  const setup: ChannelEntry[] = rows.map((r) => (r.fn === FIXED ? r.value : r.fn));
+  const labels: (string | null)[] = rows.map((r) => (r.fn === FIXED && r.label.trim() ? r.label.trim() : null));
+  while (labels.length && labels[labels.length - 1] === null) labels.pop();
+  const hasFixed = setup.some((e) => isFixedValue(e));
+  return {
+    channel_setup: hasFixed ? setup : (setup as string[]).join(''),
+    channel_labels: labels.length ? labels : null,
+  };
+}
 
 const sharedDialogStyles = css`
   .backdrop {
@@ -140,17 +192,167 @@ export class ArtnetDeviceDialog extends LitElement {
 
   @state() private _working!: PatchDevice;
   @state() private _count = 1;
+  /** Custom channel layout being edited, or null for the type's default layout. */
+  @state() private _rows: ChannelRow[] | null = null;
 
   willUpdate(changed: Map<string, unknown>) {
     if (changed.has('device')) {
       this._working = { ...this.device };
       this._count = 1;
+      this._rows = hasCustomSetup(this.device) ? rowsFromDevice(this.device) : null;
     }
   }
 
   private _set<K extends keyof PatchDevice>(key: K, value: PatchDevice[K]) {
     this._working = { ...this._working, [key]: value };
   }
+
+  private _setRows(rows: ChannelRow[] | null) {
+    this._rows = rows;
+    this._working = {
+      ...this._working,
+      ...(rows ? rowsToSetup(rows) : { channel_setup: null, channel_labels: null }),
+    };
+  }
+
+  private _setType(type: string) {
+    this._set('type', type);
+    // Binary fixtures are a single on/off channel; they have no channel layout.
+    if (type === 'binary' && this._rows) this._setRows(null);
+  }
+
+  private _toggleCustom(on: boolean) {
+    if (!on) {
+      this._setRows(null);
+      return;
+    }
+    // Start from the type's default layout so the user only adds what differs.
+    const base = rowsFromDevice({ ...this._working, channel_setup: null, channel_labels: null });
+    this._setRows(base);
+  }
+
+  private _updateRow(index: number, patch: Partial<ChannelRow>) {
+    const rows = [...(this._rows ?? [])];
+    rows[index] = { ...rows[index], ...patch };
+    this._setRows(rows);
+  }
+
+  private _addRow(fixed: boolean) {
+    const allowed = ALLOWED_FUNCTIONS[this._working.type] ?? '';
+    const row: ChannelRow =
+      fixed || !allowed
+        ? { fn: FIXED, value: 0, label: '' }
+        : { fn: allowed[0], value: 0, label: '' };
+    this._setRows([...(this._rows ?? []), row]);
+  }
+
+  private _moveRow(index: number, delta: number) {
+    const rows = [...(this._rows ?? [])];
+    const target = index + delta;
+    if (target < 0 || target >= rows.length) return;
+    [rows[index], rows[target]] = [rows[target], rows[index]];
+    this._setRows(rows);
+  }
+
+  private _removeRow(index: number) {
+    const rows = (this._rows ?? []).filter((_, i) => i !== index);
+    this._setRows(rows);
+  }
+
+  private _renderChannels() {
+    const d = this._working;
+    if (d.type === 'binary') return nothing;
+    const rows = this._rows;
+    const allowed = ALLOWED_FUNCTIONS[d.type] ?? '';
+    return html`
+      <label class="check">
+        <input
+          type="checkbox"
+          .checked=${!!rows}
+          @change=${(e: Event) => this._toggleCustom((e.target as HTMLInputElement).checked)}
+        />
+        Custom channel layout
+      </label>
+      <div class="hint">
+        ${rows
+          ? 'Light channels follow the entity; dummy channels always send their fixed value (use them for mode, strobe or macro channels).'
+          : `Uses the ${d.type} default. Turn on to reorder channels or add dummy channels such as Mode or Strobe.`}
+      </div>
+      ${rows
+        ? html`
+            <div class="channels">
+              ${rows.map((row, i) => {
+                const problem = rowProblem(row, d.type);
+                const dummy = row.fn === FIXED;
+                return html`
+                  <div class="ch-row ${problem ? 'invalid' : ''}" title=${problem}>
+                    <span class="ch-nr">${d.channel + i * byteSize(d)}</span>
+                    <select
+                      aria-label="Channel ${i + 1} function"
+                      @change=${(e: Event) =>
+                        this._updateRow(i, { fn: (e.target as HTMLSelectElement).value })}
+                    >
+                      ${[...allowed].map(
+                        (fn) =>
+                          html`<option value=${fn} ?selected=${row.fn === fn}>
+                            ${FUNCTION_NAMES[fn] ?? fn}
+                          </option>`
+                      )}
+                      ${!dummy && !allowed.includes(row.fn)
+                        ? html`<option value=${row.fn} selected>${FUNCTION_NAMES[row.fn] ?? row.fn}</option>`
+                        : nothing}
+                      <option value=${FIXED} ?selected=${dummy}>Dummy (fixed value)</option>
+                    </select>
+                    ${dummy
+                      ? html`
+                          <input
+                            class="ch-label"
+                            placeholder="Label, e.g. Mode"
+                            maxlength=${MAX_LABEL_LENGTH}
+                            aria-label="Channel ${i + 1} label"
+                            .value=${row.label}
+                            @input=${(e: Event) =>
+                              this._updateRow(i, { label: (e.target as HTMLInputElement).value })}
+                          />
+                          <input
+                            class="ch-value"
+                            type="number"
+                            min="0"
+                            max="255"
+                            step="1"
+                            aria-label="Channel ${i + 1} value"
+                            .value=${String(row.value)}
+                            @input=${(e: Event) =>
+                              this._updateRow(i, {
+                                value: Number((e.target as HTMLInputElement).value),
+                              })}
+                          />
+                        `
+                      : html`<span class="ch-fill">follows light</span>`}
+                    <span class="ch-tools">
+                      <button class="icon" title="Move up" ?disabled=${i === 0}
+                        @click=${() => this._moveRow(i, -1)}>↑</button>
+                      <button class="icon" title="Move down" ?disabled=${i === rows.length - 1}
+                        @click=${() => this._moveRow(i, 1)}>↓</button>
+                      <button class="icon" title="Remove channel" ?disabled=${rows.length === 1}
+                        @click=${() => this._removeRow(i)}>✕</button>
+                    </span>
+                    ${problem ? html`<span class="ch-problem">${problem}</span>` : nothing}
+                  </div>
+                `;
+              })}
+            </div>
+            <div class="ch-add">
+              ${allowed
+                ? html`<button @click=${() => this._addRow(false)}>+ Light channel</button>`
+                : nothing}
+              <button @click=${() => this._addRow(true)}>+ Dummy channel</button>
+            </div>
+          `
+        : nothing}
+    `;
+  }
+
 
   render() {
     const d = this._working;
@@ -200,7 +402,7 @@ export class ArtnetDeviceDialog extends LitElement {
               <label>Type</label>
               <select
                 .value=${d.type}
-                @change=${(e: Event) => this._set('type', (e.target as HTMLSelectElement).value)}
+                @change=${(e: Event) => this._setType((e.target as HTMLSelectElement).value)}
               >
                 ${DEVICE_TYPES.map((t) => html`<option value=${t} ?selected=${d.type === t}>${t}</option>`)}
               </select>
@@ -275,13 +477,7 @@ export class ArtnetDeviceDialog extends LitElement {
             </div>
           </div>
 
-          <label>Channel setup (optional, e.g. rgbw / dCH)</label>
-          <input
-            .value=${typeof d.channel_setup === 'string' ? d.channel_setup : ''}
-            placeholder="type default"
-            @input=${(e: Event) =>
-              this._set('channel_setup', (e.target as HTMLInputElement).value || null)}
-          />
+          ${this._renderChannels()}
 
           ${showTemp
             ? html`
@@ -336,6 +532,11 @@ export class ArtnetDeviceDialog extends LitElement {
       this.errorText = 'Name is required';
       return;
     }
+    const bad = (this._rows ?? []).findIndex((r) => rowProblem(r, this._working.type));
+    if (bad >= 0) {
+      this.errorText = `Channel ${bad + 1}: ${rowProblem(this._rows![bad], this._working.type)}`;
+      return;
+    }
     this.dispatchEvent(
       new CustomEvent('save-device', {
         detail: {
@@ -359,7 +560,95 @@ export class ArtnetDeviceDialog extends LitElement {
     );
   }
 
-  static styles = sharedDialogStyles;
+  static styles = [
+    sharedDialogStyles,
+    css`
+      .dialog {
+        width: min(540px, calc(100vw - 32px));
+      }
+      label.check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 16px;
+        font-size: 0.9rem;
+        color: var(--primary-text-color, #212121);
+        cursor: pointer;
+      }
+      label.check input {
+        width: auto;
+      }
+      .channels {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .ch-row {
+        display: grid;
+        grid-template-columns: 2.5em minmax(0, 1.3fr) minmax(0, 1fr) 4.5em auto;
+        align-items: center;
+        gap: 6px;
+      }
+      .ch-row.invalid select {
+        border-color: var(--error-color, #db4437);
+      }
+      .ch-row select,
+      .ch-row input {
+        padding: 6px 8px;
+      }
+      .ch-nr {
+        font-size: 0.8rem;
+        font-variant-numeric: tabular-nums;
+        color: var(--secondary-text-color, #727272);
+        text-align: right;
+      }
+      .ch-fill {
+        grid-column: span 2;
+        font-size: 0.8rem;
+        color: var(--secondary-text-color, #727272);
+      }
+      .ch-tools {
+        display: flex;
+        gap: 2px;
+      }
+      .ch-problem {
+        grid-column: 2 / -1;
+        color: var(--error-color, #db4437);
+        font-size: 0.75rem;
+      }
+      button.icon {
+        padding: 4px 8px;
+        border-radius: 6px;
+      }
+      button.icon:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      .ch-add {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      @media (max-width: 480px) {
+        .ch-row {
+          grid-template-columns: 2em minmax(0, 1fr) 4em;
+        }
+        .ch-row select {
+          grid-column: 2 / -1;
+        }
+        .ch-row .ch-label {
+          grid-column: 2;
+        }
+        .ch-fill {
+          grid-column: 2 / -1;
+        }
+        .ch-tools {
+          grid-column: 2 / -1;
+        }
+      }
+    `,
+  ];
 }
 
 /** Add/edit a node. Fires 'save-node' {node, original} or 'delete-node' {node}. */
@@ -837,6 +1126,7 @@ export function newDevice(channel: number): PatchDevice {
     byte_order: 'big',
     output_correction: null,
     channel_setup: null,
+    channel_labels: null,
   };
 }
 

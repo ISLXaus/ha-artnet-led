@@ -59,7 +59,13 @@ from custom_components.artnet_led.const import (
 )
 from custom_components.artnet_led.entity_factory import create_light_entities
 from custom_components.artnet_led.runtime import ArtNetRuntime, NodeConflictError
-from custom_components.artnet_led.util.channel_switch import validate, to_values, from_values
+from custom_components.artnet_led.util.channel_switch import (
+    from_values,
+    is_fixed_value,
+    off_values,
+    to_values,
+    validate,
+)
 
 CONF_DEVICE_TRANSITION = ATTR_TRANSITION
 
@@ -138,6 +144,21 @@ class DmxBaseLight(LightEntity, RestoreEntity):
 
         if isinstance(channel, ChannelBridge):
             channel.callback_values_updated = self._update_values
+
+        # Dummy channels (fixed values in channel_setup) output their value from the
+        # start, even while the light itself is still off.
+        if self._has_fixed_values():
+            channel.set_values(self._off_values())
+
+    def _has_fixed_values(self) -> bool:
+        setup = getattr(self, "_channel_setup", None)
+        return bool(setup) and not isinstance(setup, str) and any(
+            is_fixed_value(c) for c in setup)
+
+    def _off_values(self) -> list[int]:
+        """DMX values when off: 0, except dummy channels which keep their fixed value."""
+        return off_values(getattr(self, "_channel_setup", None), self._channel_size[1],
+                          self._channel._width)
 
     def set_type(self, type):
         self._type = type
@@ -276,10 +297,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         """
         transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
 
-        self._channel.set_fade(
-            [0 for _ in range(self._channel._width)],
-            transition * 1000
-        )
+        self._channel.set_fade(self._off_values(), transition * 1000)
 
         self._state = False
         self.async_schedule_update_ha_state()
@@ -420,6 +438,8 @@ class DmxDimmer(DmxBaseLight):
         self._supported_color_modes.add(ColorMode.BRIGHTNESS)
         self._channel_setup = kwargs.get(CONF_CHANNEL_SETUP) or "d"
         validate(self._channel_setup, self.CONF_TYPE)
+        # A dimmer can carry extra dummy channels, e.g. [d, 0] for dimmer + mode.
+        self._channel_width = len(self._channel_setup)
 
     def _update_values(self, values: array[int]):
         self._state, self._attr_brightness, _, _, _, _, _, _, _, _ = \

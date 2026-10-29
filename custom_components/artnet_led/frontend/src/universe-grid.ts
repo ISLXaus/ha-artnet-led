@@ -6,6 +6,9 @@ import {
   HomeAssistant,
   footprint,
   deviceColor,
+  byteSize,
+  channelRole,
+  hasCustomSetup,
 } from './model';
 import { subscribeDmx, DmxFrame } from './ws';
 
@@ -88,16 +91,22 @@ export class ArtnetUniverseGrid extends LitElement {
       const value = this._values[ch - 1];
       const heat = this._live && value !== undefined ? value / 255 : 0;
       const drop = this._dropTarget;
+      const role = entry
+        ? channelRole(entry.device, Math.floor((ch - entry.device.channel) / byteSize(entry.device)))
+        : undefined;
+      const showRole = !!role && hasCustomSetup(entry!.device);
       const inDropRange = drop && ch >= drop.first && ch <= drop.last;
       cells.push(html`
         <div
           class="cell ${entry ? 'occupied' : ''} ${entry?.overlap ? 'overlap' : ''}
+            ${role?.dummy ? 'dummy' : ''}
             ${inDropRange ? (drop.valid ? 'drop-ok' : 'drop-bad') : ''}"
           style=${entry
             ? `--device-color: ${deviceColor(entry.index)}`
             : nothing}
           title=${entry
-            ? `${entry.device.name} (${entry.device.type}) — channel ${ch}${this.readonly ? '' : ' — drag to move'}`
+            ? `${entry.device.name} (${entry.device.type}) — channel ${ch}: ${role!.text}` +
+              `${role!.dummy ? ` (fixed ${role!.value})` : ''}${this.readonly ? '' : ' — drag to move'}`
             : `Channel ${ch}`}
           draggable=${entry && !this.readonly ? 'true' : 'false'}
           @click=${() => this._cellClick(ch, entry?.device)}
@@ -109,9 +118,15 @@ export class ArtnetUniverseGrid extends LitElement {
           ${this._live
             ? html`<span class="heat" style="opacity: ${heat}"></span>`
             : nothing}
-          <span class="ch">${ch}</span>
+          <span class="top">
+            <span class="ch">${ch}</span>
+            ${role?.dummy && !this._live ? html`<span class="fixed">${role.value}</span>` : nothing}
+          </span>
           ${entry?.first
             ? html`<span class="name">${entry.device.name}</span>`
+            : nothing}
+          ${showRole && (role!.dummy || !entry!.first)
+            ? html`<span class="role">${role!.text}</span>`
             : nothing}
           ${this._live && value !== undefined
             ? html`<span class="val">${value}</span>`
@@ -275,6 +290,36 @@ export class ArtnetUniverseGrid extends LitElement {
       outline: 2px dashed var(--error-color, #db4437);
       outline-offset: -2px;
       cursor: not-allowed;
+    }
+    .cell.occupied.dummy {
+      background: repeating-linear-gradient(
+          -45deg,
+          rgba(0, 0, 0, 0.18) 0 4px,
+          transparent 4px 8px
+        ),
+        var(--device-color);
+    }
+    .role {
+      position: relative;
+      font-size: 0.55rem;
+      line-height: 1.1;
+      opacity: 0.9;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .top {
+      position: relative;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 2px;
+    }
+    .fixed {
+      font-size: 0.6rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
     }
     .heat {
       position: absolute;

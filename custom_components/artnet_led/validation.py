@@ -33,6 +33,7 @@ from custom_components.artnet_led.const import (
     OWNER_YAML,
 )
 from custom_components.artnet_led.runtime import ArtNetRuntime, node_key
+from custom_components.artnet_led.util.channel_switch import allowed_chars_per_type, is_fixed_value
 
 log = logging.getLogger(__name__)
 
@@ -50,9 +51,25 @@ DEFAULT_CHANNEL_SETUP: dict[str, Any] = {
 }
 
 
+# Keys stored with a patch device that only the panel uses; stripped before the
+# device is handed to DEVICE_SCHEMA / the entity classes.
+#   id:             panel-internal identity
+#   channel_labels: per-channel labels (list aligned with channel_setup, entries
+#                   str or null), e.g. "Mode" / "Strobe" for dummy channels
+CONF_CHANNEL_LABELS = "channel_labels"
+PANEL_ONLY_KEYS = frozenset({"id", CONF_CHANNEL_LABELS})
+
+MAX_LABEL_LENGTH = 32
+
+
+def device_schema_input(device: dict) -> dict:
+    """A stored patch device minus panel-only keys and unset (None) values."""
+    return {k: v for k, v in device.items() if k not in PANEL_ONLY_KEYS and v is not None}
+
+
 def compute_channel_width(device_type: str, channel_setup) -> int:
     """Logical channel count of a device, matching the entity class constructors."""
-    if device_type in ("binary", "dimmer"):
+    if device_type == "binary":
         return 1
     setup = channel_setup or DEFAULT_CHANNEL_SETUP.get(device_type)
     return len(setup) if setup else 1
@@ -91,8 +108,7 @@ def patch_node_to_setup_config(node: dict) -> dict:
                 CONF_OUTPUT_CORRECTION: universe.get(CONF_OUTPUT_CORRECTION) or "linear",
                 CONF_DEVICES: [
                     # Strip panel-only keys (id) before schema validation.
-                    DEVICE_SCHEMA({k: v for k, v in device.items()
-                                   if k != "id" and v is not None})
+                    DEVICE_SCHEMA(device_schema_input(device))
                     for device in universe.get("devices", [])
                 ],
             }
@@ -110,6 +126,71 @@ def patch_node_to_setup_config(node: dict) -> dict:
         CONF_NODE_MULTICAST: bool(node.get(CONF_NODE_MULTICAST)),
         CONF_NODE_UNIVERSES: universes,
     }
+
+
+def channel_setup_errors(device_type: str, channel_setup, channel_labels) -> list[tuple[str, str, str]]:
+    """Check a device's channel layout. Returns (field, code, message) tuples.
+
+    channel_setup is a string of function letters ("rgbw") or a list mixing
+    letters and dummy channels (whole numbers 0-255 that are output as-is).
+    """
+    errors: list[tuple[str, str, str]] = []
+    allowed = allowed_chars_per_type.get(device_type, "")
+
+    if channel_setup is None:
+        entries: list = []
+    elif isinstance(channel_setup, (str, list)):
+        entries = list(channel_setup)
+        if not entries:
+            errors.append((CONF_CHANNEL_SETUP, "invalid_channel_setup",
+                           "Channel setup must not be empty (leave it unset for the type default)"))
+    else:
+        errors.append((CONF_CHANNEL_SETUP, "invalid_channel_setup",
+                       "Channel setup must be a string of letters or a list"))
+        entries = []
+
+    if entries and device_type == "binary":
+        errors.append((CONF_CHANNEL_SETUP, "invalid_channel_setup",
+                       "Binary fixtures do not support a channel setup"))
+        entries = []
+
+    for index, entry in enumerate(entries):
+        position = f"Channel {index + 1}"
+        if is_fixed_value(entry):
+            if not 0 <= entry <= 255:
+                errors.append((f"{CONF_CHANNEL_SETUP}/{index}", "invalid_channel_value",
+                               f"{position}: fixed value must be between 0 and 255"))
+        elif isinstance(entry, str) and len(entry) == 1 and entry in allowed:
+            continue
+        elif isinstance(entry, str) and len(entry) == 1:
+            hint = f"allowed: {allowed}" if allowed else "only fixed values (0-255) are allowed"
+            errors.append((f"{CONF_CHANNEL_SETUP}/{index}", "invalid_channel_setup",
+                           f"{position}: '{entry}' is not valid for type {device_type} ({hint})"))
+        else:
+            errors.append((f"{CONF_CHANNEL_SETUP}/{index}", "invalid_channel_setup",
+                           f"{position}: must be a single letter or a whole number 0-255"))
+
+    if channel_labels is not None:
+        if not isinstance(channel_labels, list):
+            errors.append((CONF_CHANNEL_LABELS, "invalid_channel_label",
+                           "Channel labels must be a list"))
+        else:
+            if len(channel_labels) > len(entries):
+                errors.append((CONF_CHANNEL_LABELS, "invalid_channel_label",
+                               f"{len(channel_labels)} labels given for {len(entries)} "
+                               "custom channel(s)"))
+            for index, label in enumerate(channel_labels):
+                if label is None:
+                    continue
+                if not isinstance(label, str):
+                    errors.append((f"{CONF_CHANNEL_LABELS}/{index}", "invalid_channel_label",
+                                   f"Channel {index + 1}: label must be text"))
+                elif len(label) > MAX_LABEL_LENGTH:
+                    errors.append((f"{CONF_CHANNEL_LABELS}/{index}", "invalid_channel_label",
+                                   f"Channel {index + 1}: label is longer than "
+                                   f"{MAX_LABEL_LENGTH} characters"))
+
+    return errors
 
 
 def validate_patch(hass: HomeAssistant, patch: dict, runtime: ArtNetRuntime) -> list[dict]:
@@ -206,14 +287,24 @@ def validate_patch(hass: HomeAssistant, patch: dict, runtime: ArtNetRuntime) -> 
             for j, device in enumerate(universe.get("devices", [])):
                 device_path = f"{universe_path}/devices/{j}"
 
+                if not isinstance(device, dict):
+                    error(device_path, "invalid_device", "Device must be a mapping")
+                    continue
+
                 try:
-                    validated = DEVICE_SCHEMA(
-                        {k: v for k, v in device.items() if k != "id" and v is not None}
-                    )
+                    validated = DEVICE_SCHEMA(device_schema_input(device))
                 except vol.Invalid as e:
                     field = "/".join(str(p) for p in e.path) if e.path else ""
                     error(f"{device_path}/{field}" if field else device_path,
                           "invalid_device", str(e))
+                    continue
+
+                setup_errors = channel_setup_errors(
+                    validated[CONF_DEVICE_TYPE], device.get(CONF_CHANNEL_SETUP),
+                    device.get(CONF_CHANNEL_LABELS))
+                for field, code, message in setup_errors:
+                    error(f"{device_path}/{field}", code, message)
+                if setup_errors:
                     continue
 
                 name = validated[CONF_DEVICE_NAME]
