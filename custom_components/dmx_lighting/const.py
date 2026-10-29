@@ -17,6 +17,7 @@ DATA_RUNTIME = "runtime"
 DATA_STORE = "store"
 DATA_ENTRY_NODES = "entry_nodes"
 DATA_MONITOR = "monitor"
+DATA_ENGINES = "effect_engines"  # entry_id -> EffectEngine
 DATA_STOP_LISTENER = "stop_listener"
 
 STORAGE_KEY = "dmx_lighting.patch"

@@ -129,6 +129,9 @@ def _ensure_ids(patch: dict) -> dict:
                     for device in universe.get("devices") or []:
                         if isinstance(device, dict):
                             device["id"] = str(uuid4())
+    for effect in patch.get("effects") or []:
+        if isinstance(effect, dict):
+            effect["id"] = str(uuid4())
     return patch
 
 
@@ -194,7 +197,10 @@ async def ws_patch_import(hass: HomeAssistant, connection, msg) -> None:
         )
         return
 
-    patch = _ensure_ids({"nodes": data["nodes"]})
+    imported = {"nodes": data["nodes"]}
+    if "effects" in data:
+        imported["effects"] = data["effects"]
+    patch = _ensure_ids(imported)
     errors = validate_patch(hass, patch, DmxRuntime.get(hass))
     connection.send_result(msg["id"], {"patch": patch, "valid": not errors, "errors": errors})
 

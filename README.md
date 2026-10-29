@@ -87,6 +87,55 @@ In the patch (and its YAML export) a custom layout is the regular [`channel_setu
 The **YAML** button in the panel header opens the whole patch as YAML text: copy or download it as a backup, or paste/load an edited version and press *Load into editor*. Imports are parsed and validated server-side (JSON works too), loaded as unsaved changes for review, and only take effect once you *Save & Apply*.
 
 
+## Effects
+
+The integration has an effects engine in the style of a lighting console's FX: an effect runs a pattern across a list of fixtures, flowing from one to the next. The Effects tab in the panel is coming next; for now, add presets under `effects:` in the patch YAML (**YAML** button → edit → *Load into editor* → *Save & Apply*).
+
+Each preset becomes a device with:
+
+* **`light.fx_<name>`** — turn it on to start the effect (fading in), off to stop it (fading out). Its brightness is the effect's master level. A `transition` in the service call overrides the preset's fade time. It shows which fixtures it is currently driving, and comes back on after a restart if it was on.
+* **Number entities** for speed, size, spread, fade in and fade out. Changes apply on the next frame and are saved into the preset.
+
+```yaml
+effects:
+  - name: Chase                 # -> light.fx_chase
+    type: chase
+    fixtures: [par_1, par_2, par_3, par_4]   # fixture names, in the order the effect flows
+    params:
+      speed: 60                 # cycles per minute (BPM)
+      crossfade: 30             # % of each step spent fading
+      fade_in: 1                # seconds
+      fade_out: 2
+  - name: Rainbow
+    type: rainbow
+    fixtures: [wash_1, wash_2, wash_3]
+    params: {speed: 10, spread: 360}
+```
+
+**Types**
+
+* Intensity: `sine`, `ramp_up`, `ramp_down`, `triangle`, `square`, `chase` (one fixture after another), `sparkle` (random flashes). They move each fixture's intensity and keep its current colour.
+* Colour: `rainbow` (hue rotation), `color_chase` (steps through `colors`), `color_wave` (between the first two `colors`). They set colour at full intensity × the master level; dimmer-only fixtures follow the intensity.
+
+**Parameters** (all optional)
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `speed` | 30 | Cycles per minute (0.1–600). Changing it never makes the effect jump. |
+| `size` / `base` | 100 / 0 | Intensity effects move from `base`% up by `size`%. |
+| `spread` | 360 | Degrees of offset across the fixtures: 0 = all together, 360 = one wave across them all. |
+| `direction` | `forward` | `forward`, `reverse` or `bounce` (back and forth). |
+| `shuffle` / `seed` | off / 0 | Random fixture order; change `seed` for a different order. |
+| `groups` | 1 | Split the fixtures into N parts that each run the whole pattern. |
+| `blocks` | 1 | N fixtures in a row share the same step. |
+| `wings` | 1 | Split each part into N wings, mirroring every other one. |
+| `duty` | 50 (`chase`: one fixture's share) | % of the cycle a `square`/`chase` step is on; for `sparkle`, how often fixtures flash. |
+| `crossfade` | 0 | % of each step spent fading instead of snapping (`square`, `chase`, `color_chase`). |
+| `fade_in` / `fade_out` | 1 / 1 | Seconds to fade the effect in when it starts and back to normal when it stops. |
+| `colors` | red, green, blue | `[r, g, b]` list for the colour effects. |
+
+**Who controls a fixture** works like a console's "latest takes precedence": starting an effect takes its fixtures over from any other running effect, and controlling a fixture yourself (turning it on/off, changing colour) releases it from its effect. When an effect stops, its fixtures fade back to whatever their own light entity says. A fixture's `dmx_effect` attribute shows which effect is driving it. Dummy channels keep their fixed values while effects run; `fixed` fixtures can't be used in effects.
+
 ## Patch reference
 
 These are the options in the panel's dialogs, under the same names as in the YAML export. A complete patch looks like this:

@@ -233,6 +233,7 @@ def validate_patch(hass: HomeAssistant, patch: dict, runtime: DmxRuntime) -> lis
 
     seen_node_keys: set[str] = set()
     seen_names: dict[str, str] = {}
+    fixture_types: dict[str, str] = {}  # fixture name -> type, for effect targets
 
     for i, node in enumerate(nodes):
         node_path = f"nodes/{i}"
@@ -334,6 +335,7 @@ def validate_patch(hass: HomeAssistant, patch: dict, runtime: DmxRuntime) -> lis
                           f"Name '{name}' collides with '{seen_names[slug]}' "
                           f"(both become entity light.{slug})")
                 seen_names[slug] = name
+                fixture_types[name] = validated[CONF_DEVICE_TYPE]
 
                 first, last = compute_dmx_footprint(validated)
                 if last > 512:
@@ -346,5 +348,115 @@ def validate_patch(hass: HomeAssistant, patch: dict, runtime: DmxRuntime) -> lis
                               f"'{o_name}' ({o_first}-{o_last})")
                         break
                 occupied.append((first, last, name))
+
+    for path, code, message in effect_errors(patch.get("effects"), fixture_types, seen_names):
+        error(path, code, message)
+
+    return errors
+
+
+def effect_entity_slug(name: str) -> str:
+    """Effects become light.fx_<slug>."""
+    return f"fx_{slugify(name)}"
+
+
+def effect_errors(effects, fixture_types: dict[str, str],
+                  fixture_slugs: dict[str, str]) -> list[tuple[str, str, str]]:
+    """Validate the patch's effect presets. Returns (path, code, message) tuples.
+
+    A preset: {"id", "name", "type", "fixtures": [fixture names, in flow order],
+    "params": {speed, size, base, spread, groups, blocks, wings, duty, crossfade,
+    fade_in, fade_out, seed, direction, shuffle, colors}}.
+    """
+    from custom_components.dmx_lighting.effects import (
+        DIRECTIONS,
+        EFFECT_PARAMS,
+        EFFECT_TYPES,
+    )
+
+    errors: list[tuple[str, str, str]] = []
+    if effects is None:
+        return errors
+    if not isinstance(effects, list):
+        return [("effects", "invalid_structure", "'effects' must be a list")]
+
+    seen: dict[str, str] = {}
+    for i, effect in enumerate(effects):
+        path = f"effects/{i}"
+        if not isinstance(effect, dict):
+            errors.append((path, "invalid_effect", "Effect must be a mapping"))
+            continue
+
+        name = effect.get("name")
+        if not isinstance(name, str) or not name.strip():
+            errors.append((f"{path}/name", "missing_name", "Effect name is required"))
+        else:
+            slug = effect_entity_slug(name)
+            if slug in seen:
+                errors.append((f"{path}/name", "duplicate_name",
+                               f"Effect '{name}' collides with '{seen[slug]}' "
+                               f"(both become light.{slug})"))
+            elif slug in fixture_slugs:
+                errors.append((f"{path}/name", "duplicate_name",
+                               f"Effect '{name}' becomes light.{slug}, which is already "
+                               f"the fixture '{fixture_slugs[slug]}'"))
+            seen[slug] = name
+
+        if effect.get("type") not in EFFECT_TYPES:
+            errors.append((f"{path}/type", "invalid_effect_type",
+                           f"Effect type must be one of {', '.join(EFFECT_TYPES)}"))
+
+        fixtures = effect.get("fixtures")
+        if not isinstance(fixtures, list) or not fixtures:
+            errors.append((f"{path}/fixtures", "no_fixtures", "Select at least one fixture"))
+        else:
+            seen_targets: set[str] = set()
+            for j, target in enumerate(fixtures):
+                tpath = f"{path}/fixtures/{j}"
+                if not isinstance(target, str) or target not in fixture_types:
+                    errors.append((tpath, "unknown_fixture",
+                                   f"'{target}' is not a fixture in the patch"))
+                elif fixture_types[target] == "fixed":
+                    errors.append((tpath, "invalid_target",
+                                   f"'{target}' is a fixed fixture; effects can't drive it"))
+                elif target in seen_targets:
+                    errors.append((tpath, "duplicate_fixture", f"'{target}' is listed twice"))
+                seen_targets.add(target)
+
+        params = effect.get("params") or {}
+        if not isinstance(params, dict):
+            errors.append((f"{path}/params", "invalid_params", "'params' must be a mapping"))
+            continue
+        for key, value in params.items():
+            ppath = f"{path}/params/{key}"
+            if key in EFFECT_PARAMS:
+                spec = EFFECT_PARAMS[key]
+                if value is None:
+                    continue
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or (
+                        spec.get("int") and not float(value).is_integer()):
+                    kind = "a whole number" if spec.get("int") else "a number"
+                    errors.append((ppath, "invalid_param", f"{key} must be {kind}"))
+                elif not spec["min"] <= value <= spec["max"]:
+                    errors.append((ppath, "out_of_range",
+                                   f"{key} must be between {spec['min']} and {spec['max']}"))
+            elif key == "direction":
+                if value not in DIRECTIONS:
+                    errors.append((ppath, "invalid_param",
+                                   f"direction must be one of {', '.join(DIRECTIONS)}"))
+            elif key == "shuffle":
+                if not isinstance(value, bool):
+                    errors.append((ppath, "invalid_param", "shuffle must be true or false"))
+            elif key == "colors":
+                if not isinstance(value, list) or not value or not all(
+                    isinstance(c, list) and len(c) == 3
+                    and all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 255
+                            for v in c)
+                    for c in value
+                ):
+                    errors.append((ppath, "invalid_param",
+                                   "colors must be a list of [red, green, blue] values 0-255"))
+            else:
+                errors.append((ppath, "unknown_param", f"Unknown effect parameter '{key}'"))
 
     return errors

@@ -57,6 +57,11 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
     """Set up lights for the UI-defined patch (config entry)."""
     entry_nodes = hass.data[DOMAIN][DATA_ENTRY_NODES].get(entry.entry_id, [])
 
+    from homeassistant.helpers import entity_platform
+
+    from custom_components.dmx_lighting.const import DATA_ENGINES
+    from custom_components.dmx_lighting.effect_entities import DmxEffectLight
+
     entities = []
     used_unique_ids = []
     for handle, universes_cfg in entry_nodes:
@@ -65,7 +70,19 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
         )
         handle.record_universes(universes_cfg)
 
-    async_add_entities(entities)
+    engine = hass.data[DOMAIN].get(DATA_ENGINES, {}).get(entry.entry_id)
+    if engine is None:
+        async_add_entities(entities)
+        return
+    engine.register_fixtures(entities)
+
+    # Fixtures first, and wait for them (incl. restoring their state), so effects
+    # restored as "on" take over fixtures that are already settled.
+    platform = entity_platform.async_get_current_platform()
+    await platform.async_add_entities(entities)
+    await platform.async_add_entities(
+        [DmxEffectLight(engine, key, preset) for key, preset in engine.presets.items()]
+    )
 
 
 def convert_to_kelvin(kelvin_string) -> int:
@@ -91,6 +108,9 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         self._channel_last_update = 0
         self._channel_width = 0
         self._type = None
+        # Set by the effect engine; see effect_engine.py.
+        self.effect_engine = None
+        self._restoring = False
 
         self._channel: pyartnet.base.Channel
 
@@ -116,6 +136,62 @@ class DmxBaseLight(LightEntity, RestoreEntity):
 
     def set_type(self, type):
         self._type = type
+
+    # ---- effects (effect_engine.py) -------------------------------------------
+
+    def _take_manual_control(self) -> None:
+        """A manual change (service call) releases the fixture from any running effect."""
+        if self.effect_engine is not None and not self._restoring:
+            self.effect_engine.release_fixture(self.name)
+
+    @property
+    def effect_owner(self) -> str | None:
+        """Key of the effect currently driving this fixture, if any."""
+        if self.effect_engine is None:
+            return None
+        return self.effect_engine.owner.get(self.name)
+
+    def cancel_fade(self) -> None:
+        fade = getattr(self._channel, "_current_fade", None)
+        if fade is not None:
+            fade.cancel()
+            self._channel._current_fade = None
+
+    def _apply_effect_color(self, rgb: tuple[int, int, int]) -> None:
+        """Set the light's colour values from an effect colour (no-op without colour)."""
+
+    def effect_values(self, level: float, rgb: tuple[int, int, int] | None) -> list[float]:
+        """Channel values for an effect frame: intensity 0..1 and, optionally, a colour.
+
+        Goes through the fixture's own get_target_values(), so its channel layout,
+        16-bit channels and dummy channels apply. Without a colour the fixture keeps
+        its current one (intensity effects).
+        """
+        saved = (self._state, self._attr_brightness, self._vals)
+        try:
+            self._state = True
+            self._attr_brightness = round(255 * min(1.0, max(0.0, level)))
+            if rgb is not None:
+                self._vals = list(self._vals) if isinstance(self._vals, (list, tuple)) else self._vals
+                self._apply_effect_color(rgb)
+            return list(self.get_target_values())
+        finally:
+            self._state, self._attr_brightness, self._vals = saved
+
+    def normal_values(self) -> list[float]:
+        """What the fixture outputs without an effect: its light entity's state."""
+        return list(self.get_target_values()) if self.is_on else self._off_values()
+
+    def write_effect_values(self, values) -> None:
+        top = self._channel._value_max
+        self._channel.set_values([min(top, max(0, round(v))) for v in values])
+
+    def async_write_ha_state_if_added(self) -> None:
+        if self.hass is not None and self.entity_id and self._platform_state is not None:
+            try:
+                self.async_write_ha_state()
+            except Exception:  # not added yet / being removed
+                pass
 
     @property
     def name(self):
@@ -148,6 +224,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
                 ],
                 "dmx_values": self._channel.get_values(),
                 "values": self._vals,
+                "dmx_effect": self.effect_owner,
                 "bright": self._attr_brightness
                 }
         self._channel_last_update = time.time()
@@ -195,6 +272,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         raise NotImplementedError()
 
     async def flash(self, old_values, old_brightness, **kwargs):
+        self._take_manual_control()
         transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
         if transition == 0:
             transition = 1
@@ -228,6 +306,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
 
     async def async_create_fade(self, **kwargs):
         """Instruct the light to turn on"""
+        self._take_manual_control()
         self._state = True
 
         transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
@@ -243,6 +322,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         Instruct the light to turn off. If a transition time has been specified in seconds
         the controller will fade.
         """
+        self._take_manual_control()
         transition = kwargs.get(ATTR_TRANSITION, self._fade_time)
 
         self._channel.set_fade(self._off_values(), transition * 1000)
@@ -261,7 +341,13 @@ class DmxBaseLight(LightEntity, RestoreEntity):
                 old_state = None
 
         if old_state is not None:
-            await self.restore_state(old_state)
+            # Restoring isn't a manual change: don't release an effect that has
+            # already taken this fixture over.
+            self._restoring = True
+            try:
+                await self.restore_state(old_state)
+            finally:
+                self._restoring = False
 
     async def restore_state(self, old_state):
         log.error("Derived class should implement this. Report this to the repository author.")
@@ -310,6 +396,10 @@ class DmxFixed(DmxBaseLight):
 class DmxBinary(DmxBaseLight):
     CONF_TYPE = "binary"
 
+    def effect_values(self, level, rgb):
+        # On/off only: on from half level up.
+        return super().effect_values(1.0 if level >= 0.5 else 0.0, None)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._channel_width = 1
@@ -321,6 +411,7 @@ class DmxBinary(DmxBaseLight):
         return [self.brightness * self._channel_size[1]]
 
     async def async_turn_on(self, **kwargs):
+        self._take_manual_control()
         if ATTR_FLASH in kwargs:
             flash_time = kwargs[ATTR_FLASH]
             if flash_time == FLASH_SHORT:
@@ -352,6 +443,7 @@ class DmxBinary(DmxBaseLight):
         )
 
     async def async_turn_off(self, **kwargs):
+        self._take_manual_control()
         self._state = False
         self._attr_brightness = 0
         self._channel.set_fade(
@@ -488,6 +580,9 @@ class DmxWhite(DmxBaseLight):
 class DmxRGB(DmxBaseLight):
     CONF_TYPE = "rgb"
 
+    def _apply_effect_color(self, rgb):
+        self._vals = tuple(rgb)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._features = LightEntityFeature.TRANSITION | LightEntityFeature.FLASH
@@ -564,6 +659,10 @@ class DmxRGB(DmxBaseLight):
 class DmxRGBW(DmxBaseLight):
     CONF_TYPE = "rgbw"
 
+    def _apply_effect_color(self, rgb):
+        # Use the white channel for the white part of the colour.
+        self._vals = list(color_rgb_to_rgbw(*rgb))
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._features = LightEntityFeature.TRANSITION | LightEntityFeature.FLASH
@@ -634,6 +733,11 @@ class DmxRGBW(DmxBaseLight):
 
 class DmxRGBWW(DmxBaseLight):
     CONF_TYPE = "rgbww"
+
+    def _apply_effect_color(self, rgb):
+        vals = list(self._vals)
+        vals[0:5] = [rgb[0], rgb[1], rgb[2], 0, 0]
+        self._vals = vals
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -741,6 +845,10 @@ class DmxRGBWW(DmxBaseLight):
 
 class DmxXY(DmxBaseLight):
     CONF_TYPE = "xy"
+
+    def _apply_effect_color(self, rgb):
+        if any(rgb):
+            self._vals = list(color_util.color_RGB_to_xy(*rgb))
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

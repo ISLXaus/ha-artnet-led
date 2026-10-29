@@ -11,6 +11,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from custom_components.dmx_lighting.const import (
+    DATA_ENGINES,
     DATA_ENTRY_NODES,
     DATA_MONITOR,
     DATA_STORE,
@@ -26,7 +27,7 @@ from custom_components.dmx_lighting.store import PatchStore
 
 log = logging.getLogger(__name__)
 
-PLATFORMS = ["light"]
+PLATFORMS = ["light", "number"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -138,12 +139,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][DATA_ENTRY_NODES][entry.entry_id] = entry_nodes
 
+    # Effect presets: the light platform registers the fixtures and adds an effect
+    # light per preset; the number platform adds their live parameters.
+    from custom_components.dmx_lighting.effect_engine import EffectEngine
+    from custom_components.dmx_lighting.validation import effect_entity_slug
+
+    bad_effects = {
+        int(e["path"].split("/")[1])
+        for e in errors
+        if e["path"].startswith("effects/") and e["path"].split("/")[1].isdigit()
+    }
+    presets = {}
+    for i, effect in enumerate(patch.get("effects") or []):
+        if i in bad_effects:
+            log.warning("Skipping effect %d (%s) due to validation errors", i,
+                        effect.get("name") if isinstance(effect, dict) else effect)
+            continue
+        presets[effect_entity_slug(effect["name"])] = effect
+    engine = EffectEngine(
+        hass,
+        create_task=lambda coro, name: entry.async_create_background_task(hass, coro, name),
+    )
+    engine.set_presets(presets)
+    hass.data[DOMAIN].setdefault(DATA_ENGINES, {})[entry.entry_id] = engine
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Tear down the entry's entities and nodes so a reload can rebuild them."""
+    engine = hass.data[DOMAIN].get(DATA_ENGINES, {}).pop(entry.entry_id, None)
+    if engine is not None:
+        engine.shutdown()
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     runtime = DmxRuntime.get(hass)
