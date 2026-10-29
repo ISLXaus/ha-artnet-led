@@ -92,6 +92,29 @@ def _coerce_port(value) -> int | None:
     return port if 1 <= port <= 65535 else None
 
 
+# Node-level default fade time (seconds) for its fixtures. A fixture's own
+# "transition" (including 0) overrides it; unset/null means "use the node's".
+CONF_NODE_TRANSITION = "transition"
+MAX_TRANSITION = 999
+
+
+def node_default_transition(node: dict) -> float | None:
+    value = node.get(CONF_NODE_TRANSITION)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _with_node_transition(device: dict, default: float | None) -> dict:
+    """The device, inheriting the node's transition when it has none of its own."""
+    if default is None or device.get(CONF_NODE_TRANSITION) is not None:
+        return device
+    return {**device, CONF_NODE_TRANSITION: default}
+
+
 def patch_node_to_setup_config(node: dict) -> dict:
     """Convert a stored patch node into the config dict the runtime/factory expects.
 
@@ -99,6 +122,7 @@ def patch_node_to_setup_config(node: dict) -> dict:
     """
     from custom_components.dmx_lighting.light import DEVICE_SCHEMA, UNIVERSE_SCHEMA
 
+    default_transition = node_default_transition(node)
     universes: dict[int, dict] = {}
     for universe_nr, universe in (node.get("universes") or {}).items():
         universes[int(universe_nr)] = UNIVERSE_SCHEMA(
@@ -107,7 +131,8 @@ def patch_node_to_setup_config(node: dict) -> dict:
                 CONF_OUTPUT_CORRECTION: universe.get(CONF_OUTPUT_CORRECTION) or "linear",
                 CONF_DEVICES: [
                     # Strip panel-only keys (id) before schema validation.
-                    DEVICE_SCHEMA(device_schema_input(device))
+                    DEVICE_SCHEMA(device_schema_input(
+                        _with_node_transition(device, default_transition)))
                     for device in universe.get("devices", [])
                 ],
             }
@@ -242,6 +267,16 @@ def validate_patch(hass: HomeAssistant, patch: dict, runtime: DmxRuntime) -> lis
         if not (0 <= float(refresh) <= 9999):
             error(f"{node_path}/refresh_every", "out_of_range",
                   "refresh_every must be between 0 and 9999")
+
+        transition = node.get(CONF_NODE_TRANSITION)
+        if transition is not None and (
+            isinstance(transition, bool)
+            or not isinstance(transition, (int, float))
+            or not (0 <= transition <= MAX_TRANSITION)
+        ):
+            error(f"{node_path}/transition", "out_of_range",
+                  f"Default transition must be between 0 and {MAX_TRANSITION} seconds "
+                  "(leave blank for none)")
 
         priority = node.get(CONF_NODE_PRIORITY)
         if priority is not None and not (0 <= int(priority) <= 200):

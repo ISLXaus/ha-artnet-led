@@ -48,6 +48,7 @@ The **DMX Patch** panel in the Home Assistant sidebar (admin users only) is wher
 
 * **Nodes**: add Art-Net, sACN or KiNet nodes with all their options (see [Node options](#node-options)).
 * **Universes**: a 512-channel grid per universe. Click an empty channel to place a fixture, click a fixture to edit or delete it, drag it to re-address it. Channel overlaps are highlighted and rejected on save.
+* **Entity shortcut**: the fixture editor shows the light entity a saved fixture already has, with its state, and *Open entity* opens Home Assistant's entity dialog (controls, history, settings) without losing your edits. Entity ids in the fixture list are links to the same dialog.
 * **Fixture list**: switch a node from *Grid* to *List* to see all its fixtures across every universe in one table — name, entity, type, address (universe and channel range) and channel layout, with dummy channels shown by label and value. Filter by name, type, entity or label, sort by name, type or address, and click a fixture to edit it. Fixtures with overlaps or validation errors are highlighted, and a dot shows whether each light is on. *Add fixture* places a new one at the first free channel of the selected universe. The panel remembers which view you used last.
 * **Live apply**: *Save & Apply* takes effect immediately — no Home Assistant restart. Entities keep their identity across saves (unique IDs are derived from `host/universe/channel`, so moving a fixture to another channel creates a new entity).
 * **Live DMX values**: toggle *Live DMX values* on any universe to watch the actual channel values update in real time (10 Hz).
@@ -124,6 +125,7 @@ nodes:
 - **port** (default 6454 for Art-Net, 5568 for sACN, 6038 for KiNet): only change this if you're sure your node uses another port.
 - **max_fps** (default 25): frame rate for fades (1 to 50).
 - **refresh_every** (default 120): seconds between resends when nothing is fading; 0 disables.
+- **transition** (optional, default 0): default fade time in seconds for the node's fixtures that don't set their own. A fixture's own transition — including `0` — always wins. In the node settings, *Make all use this default* clears the fixture-level values so every fixture on the node follows it.
 - **priority** (default 100; sACN only): E1.31 priority (0-200). Receivers merge multiple sources by priority; higher wins.
 - **multicast** (default off; sACN only): send each universe to its standard `239.255.x.x` multicast group instead of unicast to `host`. Most sACN receivers and viewer apps expect this; with unicast, viewer apps on other machines won't see the output. When enabled, `host` is only used as an identifier. Home Assistant also announces its universes with E1.31 Universe Discovery so tools like sACNView list it as a source.
 
@@ -145,7 +147,7 @@ nodes:
   - `rgbww`: red, green, blue, cool white, warm white
   - `color_temp`: cool white, warm white
   - `xy`: dimmer plus X/Y color
-- **transition** (default 0): default fade time in seconds; a transition sent from Home Assistant overrides it.
+- **transition** (optional): fade time in seconds. Leave it blank to use the node's default transition; any value, including `0`, overrides the node default. A transition sent from Home Assistant (e.g. in `light.turn_on`) overrides both. The fixture list shows each fixture's fade time, marked *own* when it overrides the node.
 - **output_correction**: dimming curve for this fixture; overrides the universe setting.
 - **channel_size** (default `8bit`): `8bit` (256 steps), `16bit` (65k steps), `24bit` or `32bit`.
 - **byte_order** (default `big`): byte order of multi-byte channels, `big` or `little`.

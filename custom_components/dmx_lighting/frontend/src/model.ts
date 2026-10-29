@@ -6,7 +6,8 @@ export interface PatchDevice {
   name: string;
   friendly_name?: string;
   type: string;
-  transition?: number;
+  /** Fade time in seconds. Unset/null = the node's default transition; 0 is an explicit override. */
+  transition?: number | null;
   channel_size?: string;
   byte_order?: string;
   output_correction?: string | null;
@@ -38,6 +39,8 @@ export interface PatchNode {
   host_override?: string;
   port_override?: number | null;
   max_fps?: number;
+  /** Default fade time (s) for fixtures that don't set their own. Mirrors validation.py. */
+  transition?: number | null;
   refresh_every?: number;
   /** sACN E1.31 priority (0-200, default 100). Only used by sacn nodes. */
   priority?: number;
@@ -237,6 +240,11 @@ export function openMoreInfo(from: HTMLElement, entityId: string): void {
   from.dispatchEvent(
     new CustomEvent('hass-more-info', { detail: { entityId }, bubbles: true, composed: true })
   );
+}
+
+/** The fade time a fixture actually uses: its own, else the node default, else 0. */
+export function effectiveTransition(device: PatchDevice, node?: PatchNode): number {
+  return device.transition ?? node?.transition ?? 0;
 }
 
 export function slugifyName(name: string): string {

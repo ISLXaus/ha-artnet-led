@@ -143,6 +143,9 @@ const sharedDialogStyles = css`
     font-size: 0.85rem;
     margin-top: 8px;
   }
+  a {
+    color: var(--primary-color, #03a9f4);
+  }
   .hint {
     font-size: 0.75rem;
     color: var(--secondary-text-color, #727272);
@@ -194,6 +197,8 @@ export class DmxDeviceDialog extends LitElement {
   @property({ attribute: false }) hass?: HomeAssistant;
   /** The light entity this (saved) fixture already has, if any. */
   @property() entityId = '';
+  /** The node's default transition (s), used when the fixture leaves it blank. */
+  @property({ attribute: false }) nodeTransition: number | null = null;
 
   @state() private _working!: PatchDevice;
   @state() private _count = 1;
@@ -537,10 +542,22 @@ export class DmxDeviceDialog extends LitElement {
                 min="0"
                 max="999"
                 step="0.1"
-                .value=${String(d.transition ?? 0)}
-                @input=${(e: Event) =>
-                  this._set('transition', Number((e.target as HTMLInputElement).value))}
+                placeholder="node default (${this.nodeTransition ?? 0})"
+                .value=${d.transition == null ? '' : String(d.transition)}
+                @input=${(e: Event) => {
+                  const v = (e.target as HTMLInputElement).value;
+                  this._set('transition', v === '' ? null : Number(v));
+                }}
               />
+              <div class="hint">
+                ${d.transition == null
+                  ? `Uses the node default: ${this.nodeTransition ?? 0}s`
+                  : html`Overrides the node default (${this.nodeTransition ?? 0}s) ·
+                      <a href="#" @click=${(e: Event) => {
+                        e.preventDefault();
+                        this._set('transition', null);
+                      }}>use default</a>`}
+              </div>
             </div>
             <div>
               <label>Output correction</label>
@@ -798,6 +815,37 @@ export class DmxNodeDialog extends LitElement {
     }
   }
 
+  /** Fixtures on this node that set their own transition (so ignore the default). */
+  private _overrides(): number {
+    return Object.values(this._working.universes ?? {}).reduce(
+      (n, u) => n + (u.devices ?? []).filter((d) => d.transition != null).length,
+      0
+    );
+  }
+
+  private _renderTransitionOverrides() {
+    const count = this._overrides();
+    return html`<div class="hint">
+      Fade time for fixtures that leave their own transition blank; a fixture's own value
+      (even 0) wins.
+      ${count
+        ? html`<br />${count} fixture${count === 1 ? ' sets its' : 's set their'} own transition.
+            <a href="#" @click=${this._clearOverrides}>Make all use this default</a>`
+        : nothing}
+    </div>`;
+  }
+
+  private _clearOverrides(e: Event) {
+    e.preventDefault();
+    const universes = Object.fromEntries(
+      Object.entries(this._working.universes ?? {}).map(([nr, u]) => [
+        nr,
+        { ...u, devices: (u.devices ?? []).map((d) => ({ ...d, transition: null })) },
+      ])
+    );
+    this._working = { ...this._working, universes };
+  }
+
   private _set<K extends keyof PatchNode>(key: K, value: PatchNode[K]) {
     this._working = { ...this._working, [key]: value };
   }
@@ -879,6 +927,26 @@ export class DmxNodeDialog extends LitElement {
               />
             </div>
           </div>
+
+          <div class="row">
+            <div>
+              <label>Default transition (s)</label>
+              <input
+                type="number"
+                min="0"
+                max="999"
+                step="0.1"
+                placeholder="0"
+                .value=${n.transition == null ? '' : String(n.transition)}
+                @input=${(e: Event) => {
+                  const v = (e.target as HTMLInputElement).value;
+                  this._set('transition', v === '' ? null : Number(v));
+                }}
+              />
+            </div>
+            <div></div>
+          </div>
+          ${this._renderTransitionOverrides()}
 
           <div class="row">
             <div>
@@ -1245,7 +1313,7 @@ export function newDevice(channel: number): PatchDevice {
     channel,
     name: '',
     type: 'dimmer',
-    transition: 0,
+    transition: null, // use the node's default transition
     channel_size: '8bit',
     byte_order: 'big',
     output_correction: null,

@@ -9,6 +9,7 @@ import {
   channelWidth,
   EntityMap,
   deviceColor,
+  effectiveTransition,
   existingEntityId,
   footprint,
   openMoreInfo,
@@ -234,6 +235,16 @@ export class DmxFixtureList extends LitElement {
                           ${d.channel_size && d.channel_size !== '8bit'
                             ? html`<div class="sub">${d.channel_size}</div>`
                             : nothing}
+                          <div
+                            class="sub"
+                            title=${d.transition == null
+                              ? 'Node default transition'
+                              : 'Fixture overrides the node default'}
+                          >
+                            fade ${effectiveTransition(d, this.node)}s${d.transition == null
+                              ? ''
+                              : html` <b>own</b>`}
+                          </div>
                         </td>
                         <td class="address">
                           <span class="uni">U${r.universe}</span>

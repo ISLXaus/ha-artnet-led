@@ -583,6 +583,7 @@ export class DmxPatchPanel extends LitElement {
               .device=${this._dialog.device}
               ?isNew=${this._dialog.isNew}
               .hass=${this.hass}
+              .nodeTransition=${this._currentNode()?.transition ?? null}
               .entityId=${this._dialog.isNew
                 ? ''
                 : (existingEntityId(
