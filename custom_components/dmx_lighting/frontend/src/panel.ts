@@ -44,6 +44,8 @@ export class DmxPatchPanel extends LitElement {
   @state() private _saving = false;
   @state() private _errors: PatchError[] = [];
   @state() private _toast = '';
+  /** HA now serves a newer panel than the one running in this tab (e.g. after an update). */
+  @state() private _updateAvailable = false;
   /** Selected node: 'ui:<idx>'. */
   @state() private _selected = '';
   @state() private _selectedUniverse = '';
@@ -100,6 +102,7 @@ export class DmxPatchPanel extends LitElement {
 
   /** Fixtures deleted from the patch (device, universe or node) leave the effects too. */
   willUpdate(changed: PropertyValues<this>) {
+    if (changed.has('hass' as keyof DmxPatchPanel)) this._checkForUpdate();
     const before = changed.get('_patch' as keyof DmxPatchPanel) as PatchDoc | undefined;
     if (!before || !this._patch.effects?.length) return;
     const now = this._fixtureNames();
@@ -112,6 +115,23 @@ export class DmxPatchPanel extends LitElement {
         fixtures: e.fixtures.filter((n) => !gone.includes(n)),
       })),
     };
+  }
+
+  /**
+   * After the integration is updated and HA restarted, an open tab keeps running the
+   * old panel code. HA registers the panel script with a content hash (?v=...), so a
+   * different hash than ours means a newer panel is installed.
+   */
+  private _checkForUpdate() {
+    const registered = this.hass?.panels?.['dmx-patch']?.config?._panel_custom?.module_url;
+    if (!registered) return;
+    try {
+      const latest = new URL(registered, location.origin).searchParams.get('v');
+      const running = new URL(import.meta.url).searchParams.get('v');
+      this._updateAvailable = !!latest && !!running && latest !== running;
+    } catch {
+      // Unusual URLs: no notice.
+    }
   }
 
   private _onEffectsChanged(e: CustomEvent) {
@@ -512,6 +532,15 @@ export class DmxPatchPanel extends LitElement {
             class=${this._mode === 'effects' ? 'active' : ''} @click=${() => this._setMode('effects')}>Effects</button>
         </span>
         ${this._dirty ? html`<span class="dirty">unsaved changes</span>` : nothing}
+        ${this._updateAvailable
+          ? html`<button
+              class="update"
+              title="DMX Lighting was updated. Reload to use the new panel${this._dirty ? ' (unsaved changes will be lost)' : ''}."
+              @click=${() => location.reload()}
+            >
+              ↻ Update installed — reload
+            </button>`
+          : nothing}
         <span class="spacer"></span>
         <button class="header-secondary" @click=${this._openYamlDialog}>YAML</button>
         <button
@@ -812,6 +841,13 @@ export class DmxPatchPanel extends LitElement {
     .effects-layout {
       display: block;
       overflow-y: auto;
+    }
+    button.update {
+      padding: 4px 12px;
+      border-radius: 14px;
+      background: var(--warning-color, #ffa600);
+      color: #000;
+      font-weight: 600;
     }
     .mode-toggle {
       flex: none;

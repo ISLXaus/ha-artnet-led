@@ -69,6 +69,8 @@ export interface HassEntityLite {
 export interface HomeAssistant {
   callWS<T>(msg: Record<string, unknown>): Promise<T>;
   states?: Record<string, HassEntityLite>;
+  /** Registered sidebar panels; ours carries the panel script URL (for update checks). */
+  panels?: Record<string, { config?: { _panel_custom?: { module_url?: string } } }>;
   connection: {
     subscribeMessage<T>(
       callback: (result: T) => void,
@@ -219,9 +221,11 @@ export function deviceColor(index: number): string {
 export type EntityMap = Record<string, string>;
 
 /**
- * The light entity a saved fixture already has, if any. Mirrors entity_factory.py:
- * unique_id is "dmx:<host>/<universe>/<channel>", but an existing entity with the
- * same name keeps its own unique_id, so fall back to light.<slug>.
+ * The light entity a saved fixture already has, if any. Mirrors entity_factory.py,
+ * which names every fixture's entity light.<slug of its name> (keeping an existing
+ * entity's unique_id). So that wins; the channel-based unique_id
+ * "dmx:<host>/<universe>/<channel>" is only a fallback (an entity renamed in HA),
+ * because after fixtures move channels it can point at a different fixture's entity.
  */
 export function existingEntityId(
   hass: HomeAssistant | undefined,
@@ -230,10 +234,11 @@ export function existingEntityId(
   universe: string | number,
   device: PatchDevice
 ): string | undefined {
+  const bySlug = `light.${slugifyName(device.name ?? '')}`;
+  const ours = Object.values(entityMap);
+  if (ours.includes(bySlug) || (!ours.length && hass?.states?.[bySlug])) return bySlug;
   const byUniqueId = entityMap[`dmx:${host}/${universe}/${device.channel}`];
   if (byUniqueId) return byUniqueId;
-  const bySlug = `light.${slugifyName(device.name ?? '')}`;
-  if (Object.values(entityMap).includes(bySlug) || hass?.states?.[bySlug]) return bySlug;
   return undefined;
 }
 
