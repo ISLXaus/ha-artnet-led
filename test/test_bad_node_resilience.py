@@ -2,9 +2,9 @@
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.artnet_led.const import DOMAIN, STORAGE_KEY
-from custom_components.artnet_led.runtime import ArtNetRuntime
-from custom_components.artnet_led.validation import validate_patch
+from custom_components.dmx_lighting.const import DOMAIN, STORAGE_KEY
+from custom_components.dmx_lighting.runtime import DmxRuntime
+from custom_components.dmx_lighting.validation import validate_patch
 
 pytestmark = pytest.mark.usefixtures("socket_enabled")
 
@@ -28,7 +28,7 @@ BAD_PORT_NODE = {
 
 
 async def test_validate_flags_bad_port(hass):
-    runtime = ArtNetRuntime.get(hass)
+    runtime = DmxRuntime.get(hass)
     errors = validate_patch(hass, {"nodes": [BAD_PORT_NODE]}, runtime)
     assert any(e["code"] == "invalid_port" and e["path"] == "nodes/0/port" for e in errors)
 

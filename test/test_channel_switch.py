@@ -1,4 +1,4 @@
-from custom_components.artnet_led.util.channel_switch import to_values, from_values
+from custom_components.dmx_lighting.channel_switch import to_values, from_values
 
 mid_k = 4268
 min_k = 2000

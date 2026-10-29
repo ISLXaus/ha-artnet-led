@@ -2,7 +2,7 @@
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.artnet_led.const import DOMAIN, PANEL_URL_PATH
+from custom_components.dmx_lighting.const import DOMAIN, PANEL_URL_PATH
 
 
 async def test_user_flow_creates_entry_and_panel(hass):

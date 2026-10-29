@@ -6,7 +6,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 # The tests drive real pyartnet nodes, which bind UDP sockets.
 pytestmark = pytest.mark.usefixtures("socket_enabled")
 
-from custom_components.artnet_led.const import (
+from custom_components.dmx_lighting.const import (
     DATA_STORE,
     DOMAIN,
     STORAGE_KEY,
@@ -113,7 +113,7 @@ async def test_ws_patch_save_triggers_reload(hass, stored_patch, hass_ws_client)
     )
 
     await client.send_json(
-        {"id": 1, "type": "artnet_led/patch/save", "patch": new_patch}
+        {"id": 1, "type": "dmx_lighting/patch/save", "patch": new_patch}
     )
     response = await client.receive_json()
     assert response["success"], response
@@ -141,7 +141,7 @@ async def test_ws_validate_rejects_overlap(hass, hass_ws_client):
     )
 
     await client.send_json(
-        {"id": 1, "type": "artnet_led/patch/validate", "patch": bad_patch}
+        {"id": 1, "type": "dmx_lighting/patch/validate", "patch": bad_patch}
     )
     response = await client.receive_json()
     assert response["success"]

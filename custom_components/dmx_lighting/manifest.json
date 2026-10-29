@@ -1,0 +1,22 @@
+{
+  "domain": "dmx_lighting",
+  "name": "DMX Lighting",
+  "codeowners": [
+    "@ISLXaus"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "http",
+    "frontend",
+    "websocket_api",
+    "panel_custom"
+  ],
+  "documentation": "https://github.com/ISLXaus/ha-artnet-led",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/ISLXaus/ha-artnet-led/issues",
+  "requirements": [
+    "pyartnet==2.0"
+  ],
+  "single_config_entry": true,
+  "version": "0.3.0"
+}

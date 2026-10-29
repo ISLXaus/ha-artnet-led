@@ -1,54 +1,57 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
-# Home Assistant component for Art-Net LED (DMX)
+# DMX Lighting for Home Assistant
 
-Updated integration Supporting the new color mode in Home Assistant. leveraged heavily form [spacemanspiff2007](https://github.com/spacemanspiff2007/home-assistant-artnet) and [jnimmo](https://github.com/jnimmo/hass-dmx)
-Now supports 16 bit resolution (also supports 24 bit and 32 bit but I don't know of a DMX controller that would use it)
-Use Brightness and RGB value separately to give more resolution to brightness to be able to make use of 16 bit resolution
+Control DMX lighting from Home Assistant over **Art-Net**, **sACN (E1.31)** and **KiNet**. Fixtures are patched in a visual **DMX Patch** panel in the sidebar and show up as ordinary Home Assistant lights: dimmers, RGB/RGBW/RGBWW, tunable white, XY and on/off, at 8, 16, 24 or 32 bits per channel.
 
-The DMX integration for Home Assistant allows you to send DMX values to an [Art-Net](http://www.art-net.org.uk) capable DMX interface. This component is a one way integration which sends [Art-Net](https://en.wikipedia.org/wiki/Art-Net) UDP packets to the DMX interface. This integration uses [pyartnet](https://github.com/spacemanspiff2007/PyArtNet) libraries and requires at least Python version 3.8.
+Output is one-way: Home Assistant sends DMX to your nodes. Output uses [pyartnet](https://github.com/spacemanspiff2007/PyArtNet).
 
 ## Installation
 
 > **Note**
-> 
-> This integration requires [HACS](https://hacs.xyz/docs/setup/download/) to be installed
-
-> **Warning**
-> 
-> When migrating from jnimmo or corb3000's integration: 
-> 1. First remove the integration
-> 2. Comment or remove the YAML config
-> 3. Restart
-> 4. Delete the light entities
-> 5. Remove all other _Custom_repositories_ that are also named `ha-artnet-led`
-> 6. Install this integration and re-introduce the config (also change change `custom_white` to `color_temp`)
+>
+> This integration requires [HACS](https://hacs.xyz/docs/setup/download/) to be installed.
 
 1. Open HACS
 2. Open the options in the top right and select _Custom repositories_
-3. Enter this repository's URL (`https://github.com/Breina/ha-artnet-led`) under the Category _Integration_.
+3. Enter this repository's URL (`https://github.com/ISLXaus/ha-artnet-led`) under the Category _Integration_.
 4. Press _Add_
 5. _+ EXPLORE & DOWNLOAD REPOSITORIES_
-6. Find _Art-net LED Lighting for DMX_ in this list
+6. Find _DMX Lighting (Art-Net, sACN, KiNet)_ in this list
 7. _DOWNLOAD THIS REPOSITORY WITH HACS_
 8. _DOWNLOAD_
-9. Restart Home Assistant (_Settings_ > _System_ >  _RESTART_)
-10. Add the integration: _Settings_ > _Devices & Services_ > _+ ADD INTEGRATION_ > _DMX Artnet integration_ — or click:
+9. Restart Home Assistant (_Settings_ > _System_ > _RESTART_)
+10. Add the integration: _Settings_ > _Devices & Services_ > _+ ADD INTEGRATION_ > _DMX Lighting_ — or click:
 
-    [![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=artnet_led)
+    [![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=dmx_lighting)
 
-    This one click creates the *DMX Patch* entry and puts the **DMX Patch** panel in the sidebar. (Home Assistant doesn't load a custom integration until it's added, so the panel can't appear from the download alone. Existing YAML setups get the panel automatically.)
+    This one click creates the *DMX Patch* entry and puts the **DMX Patch** panel in the sidebar. (Home Assistant doesn't load a custom integration until it's added, so the panel can't appear from the download alone.)
 
-## DMX Patch panel (UI configuration)
+### Upgrading from v0.2.x (`artnet_led`)
 
-Since v0.2.0 the integration ships a **DMX Patch** panel in the Home Assistant sidebar (admin users only). It is a visual patch editor that replaces the need for YAML:
+Up to v0.2.x this integration was called *DMX Artnet integration* and used the domain `artnet_led`. v0.3.0 renames it to *DMX Lighting* (`dmx_lighting`). Your patch and lights move over automatically:
 
-* **Nodes**: add Art-Net/sACN/KiNet nodes with all their options (protocol, host, port, max FPS, refresh interval).
-* **Universes**: a 512-channel grid per universe. Click an empty channel to place a fixture, click a fixture to edit or delete it. Channel overlaps are highlighted and rejected on save.
+1. Update the repository in HACS and restart Home Assistant.
+2. If a `custom_components/artnet_led` folder is still there, delete it (or remove the old download in HACS) and restart again.
+3. Add the integration (installation step 10).
+
+On that first setup DMX Lighting copies the patch from `.storage/artnet_led.patch`, moves every `artnet_led` light to the new integration with the **same entity ID** (so history, dashboards and automations keep working), and removes the old *DMX Patch* entry.
+
+Also note:
+
+* **YAML configuration (`light: - platform: artnet_led`) is no longer supported.** Remove it from `configuration.yaml`, then recreate those nodes in the panel. To do that by text, write them in the panel's YAML format (see [Backup / edit as YAML](#backup--edit-as-yaml)) and use *Load into editor*. As long as a light keeps its host, universe and channel, it keeps its entity and history.
+* **Art-Net controller mode (`artnet-controller`) has been removed.** Use `artnet-direct` to each node instead. A stored node of that type is flagged in the panel and skipped until you change it.
+
+## DMX Patch panel
+
+The **DMX Patch** panel in the Home Assistant sidebar (admin users only) is where everything is configured:
+
+* **Nodes**: add Art-Net, sACN or KiNet nodes with all their options (see [Node options](#node-options)).
+* **Universes**: a 512-channel grid per universe. Click an empty channel to place a fixture, click a fixture to edit or delete it, drag it to re-address it. Channel overlaps are highlighted and rejected on save.
 * **Live apply**: *Save & Apply* takes effect immediately — no Home Assistant restart. Entities keep their identity across saves (unique IDs are derived from `host/universe/channel`, so moving a fixture to another channel creates a new entity).
 * **Live DMX values**: toggle *Live DMX values* on any universe to watch the actual channel values update in real time (10 Hz).
 
-The panel appears once the *DMX Patch* config entry exists — created by adding the integration (installation step 10), or automatically by the first *Save & Apply* for YAML users. The patch itself is stored in `.storage/artnet_led.patch`.
+The patch is stored in `.storage/dmx_lighting.patch`.
 
 ### Custom fixtures and dummy channels
 
@@ -61,7 +64,7 @@ Use ↑/↓ to put channels in the fixture's order and ✕ to remove one. The ty
 
 In the universe grid dummy channels are hatched and show their label and value. They count towards the fixture's footprint, so overlaps and the 512-channel limit include them. Validation (server-side, on save and import) checks that values are whole numbers 0–255, that each light channel fits the type, and that labels are text.
 
-In the patch (and its YAML export) a custom layout is the regular [`channel_setup`](#channel_setup) list — numbers are dummy channels — plus a panel-only `channel_labels` list in the same order (`null` for unlabeled channels):
+In the patch (and its YAML export) a custom layout is the regular [`channel_setup`](#channel-layout-channel_setup) list — numbers are dummy channels — plus a panel-only `channel_labels` list in the same order (`null` for unlabeled channels):
 
 ```yaml
 - channel: 1
@@ -71,117 +74,84 @@ In the patch (and its YAML export) a custom layout is the regular [`channel_setu
   channel_labels: [null, null, null, null, Mode, Strobe]
 ```
 
-The same `channel_setup` works in YAML configuration; `channel_labels` is only used by the panel.
+`channel_labels` is only used by the panel.
 
 ### Backup / edit as YAML
 
 The **YAML** button in the panel header opens the whole patch as YAML text: copy or download it as a backup, or paste/load an edited version and press *Load into editor*. Imports are parsed and validated server-side (JSON works too), loaded as unsaved changes for review, and only take effect once you *Save & Apply*.
 
-### Coexistence with YAML
 
-Existing YAML configuration keeps working unchanged. YAML-defined nodes appear in the panel read-only (🔒), with live monitoring available. A node (`host:port`) can be owned by either YAML or the panel, not both — the panel will refuse to save a node that is already configured in YAML. To migrate a node from YAML to the UI, remove it from `configuration.yaml`, restart once, then recreate it in the panel (entities keep their history as long as names and channels stay the same).
+## Patch reference
 
-## Configuration (YAML)
-
-hass-dmx is a community supported Home Assistant integration, if you have any questions you can discuss with the [Home Assistant DMX Community](https://community.home-assistant.io/t/dmx-lighting/2248).
-
-artnet-led lighting is configured in the `configuration.yaml` file under the *light* domain.
-
-
-Example:
+These are the options in the panel's dialogs, under the same names as in the YAML export. A complete patch looks like this:
 
 ```yaml
-light:
-- platform: artnet_led
-  host: IP                              # IP of Art-Net Node
-  max_fps: 25                           # Max 40 per second
-  refresh_every: 0                      # Resend values if no fades are running every x seconds, 0 disables automatic refresh
-  node_type: artnet-direct              # Which protocol to use
-  universes:                            # Support for multiple universes
-    0:                                  # Nr of Universe (see configuration of your Art-Net Node)
-      send_partial_universe: True       # Only send the universe which contains data
-      output_correction: quadratic      # optional: output correction for the whole universe, will be used as default if nothing is set for the channel
-      devices:
-        # Dimmer
-        - channel: 1                    # first channel of dmx dimmer
-          name: my_dimmer               # name
-          type: dimmer                  # type
-          transition: 1                 # default duration of fades in sec. Will be overridden by Transition sent from HA
-          output_correction: quadratic  # optional: quadratic, cubic or quadruple. Apply different dimming curves to the output. Default is None which means linear dimming
-          channel_size: 16bit           # width of the channel sent to DMX device, default "8bit", "16bit", "24bit" and "32bit" available.
-        - channel: 3
-          name: my_rgb_lamp
-          type: rgb
-          transition: 1
-          channel_size: 16bit
-          output_correction: quadratic
-          channel_setup: rbgw           # Auto-calculated white channel
-        - channel: 125
-          type: color_temp
-          name: "my_color_temp_lamp"
-          min_temp: 2500K
-          max_temp: 6500K
-          channel_setup: ch
-        - channel: 41
-          type: rgbww
-          name: my_rgbww_lamp
-          transition: 10
-        - channel: 50
-          name: sp4led_1_dimmer
-          type: fixed
-          channel_setup:
-            - 255
+nodes:
+  - node_type: artnet-direct
+    host: 192.168.1.50
+    max_fps: 25
+    refresh_every: 120
+    universes:
+      "0":
+        send_partial_universe: true
+        output_correction: quadratic
+        devices:
+          - channel: 1
+            name: my_dimmer
+            type: dimmer
+            transition: 1
+            channel_size: 16bit
+          - channel: 3
+            name: my_rgb_lamp
+            type: rgb
+            channel_setup: rbgw          # auto-calculated white channel
+          - channel: 125
+            name: my_color_temp_lamp
+            type: color_temp
+            min_temp: 2500K
+            max_temp: 6500K
+            channel_setup: ch
 ```
 
-### Configuration variables
-- **host** (*Required*): Art-Net/DMX gateway address
-- **port** (*Optional; default=6454 (Art-Net), 5568 (sACN), 6038 (KiNet)*): DMX gateway port. This is directly hardcoded into the respective protocols, so don't change this if you're not very certain.
-- **max-fps** (*Optional; default=25*): frame rate for fade update (1 to 40 FPS)
-- **refresh_every** (*Optional; default=120*): Seconds to resend values if no fades are running, 0 disables.
-- **node_type** (*Optional; default=artnet-direct*): the protocol to use
-  - **'artnet-direct'**: Directly sends DMX packets to a single node's IP.
-  - **'artnet-controller'**: Auto-discovers ArtNet nodes and other controllers, can be picked up by other controllers. Will allow Home Assistant lights to be updated through DMX input.
-  - **'sacn'**: The E1.31 sACN protocol, directly sending to a node's IP.
-  - **'kinet'**: The KiNET, directly sending to a node's IP.
-- **priority** (*Optional; default=100; sACN only*): E1.31 priority (0-200). Receivers merge multiple sources by priority; higher wins.
-- **multicast** (*Optional; default=False; sACN only*): send each universe to its standard `239.255.x.x` multicast group instead of unicast to `host`. This is how most sACN receivers and viewer/monitoring apps expect to receive data; with unicast, viewer apps on other machines will not see the output. When enabled, `host` is only used as an identifier.
-- **universe** (*Required*): Art-Net universe for following DMX channels.
-  - **send_partial_universe** (*Optional; default=True*): Some controllers only accept full DMX frames. Set to `False` 
-    to always send the full 512 channels to every universe.
-  - **output_correction** (*Optional; default=linear*): applied to whole universe
-    - **'linear'**
-    - **'quadratic'** (see Graph)
-    - **'cubic'** (see Graph)
-    - **'quadruple'** (see Graph)
+### Node options
 
-### Device configuration variables
-  - **channel** (*Required*): The DMX channel for the light (1-512)
-  - **name** (*Required*): Friendly name for the light 
-  - **type** (*Optional; default=dimmer*): 
-    - **'fixed'** (fixed single channel)
-    - **'binary'** (single channel)
-    - **'dimmer'** (single channel)
-    - **'rgb'** (red, green, blue)
-    - **'rgbw'** (red, green, blue, white)
-    - **'rgbww'** (red, green, blue, cool-white, warm-white)
-    - **'color_temp'** (cool-white, warm-white)
-  - **transition** (*Optional; default=0*): Duration in seconds of the fading animation
-  - **output_correction** (*Optional; default=linear*): applied to each channel, overrides universe setting.
-    - **'linear'**
-    - **'quadratic'** (see Graph)
-    - **'cubic'** (see Graph)
-    - **'quadruple'** (see Graph)
-  - **channel_size** (*Optional; default= 8bit*): width of the channel sent to DMX device.
-    - **'8bit'** (255 steps)
-    - **'16bit'** (65k steps)
-    - **'24bit'** (too many steps)
-    - **'32bit'** (don't ask steps)
-  - **byte_order** (*Optional; default=big*): For multi-byte channels, the bytes can be little-endian or big-endian. 
-  - **min_temp** (Optional; default=2700K): Only applies for types 'color_temp' and 'rgbww'
-  - **max_temp** (Optional; default=6500K): Only applies for types 'color_temp' and 'rgbww'
-  - **channel_setup** (Optional; see [channel_setup](#channel_setup))
+- **node_type** (default `artnet-direct`): the protocol
+  - `artnet-direct`: Art-Net, sent directly to the node's IP.
+  - `sacn`: E1.31 sACN, unicast to the node's IP or multicast (see `multicast`). Universes start at 1.
+  - `kinet`: KiNet, sent directly to the node's IP.
+- **host** (required): IP address of the node.
+- **port** (default 6454 for Art-Net, 5568 for sACN, 6038 for KiNet): only change this if you're sure your node uses another port.
+- **max_fps** (default 25): frame rate for fades (1 to 50).
+- **refresh_every** (default 120): seconds between resends when nothing is fading; 0 disables.
+- **priority** (default 100; sACN only): E1.31 priority (0-200). Receivers merge multiple sources by priority; higher wins.
+- **multicast** (default off; sACN only): send each universe to its standard `239.255.x.x` multicast group instead of unicast to `host`. Most sACN receivers and viewer apps expect this; with unicast, viewer apps on other machines won't see the output. When enabled, `host` is only used as an identifier. Home Assistant also announces its universes with E1.31 Universe Discovery so tools like sACNView list it as a source.
 
-### channel_setup
+### Universe options
+
+- **send_partial_universe** (default on): only send channels up to the last one in use. Some nodes only accept full DMX frames; turn this off to always send all 512 channels.
+- **output_correction** (default `linear`): dimming curve for the whole universe: `linear`, `quadratic`, `cubic` or `quadruple` (see [Output correction](#output-correction)).
+
+### Fixture options
+
+- **channel** (required): first DMX channel (1-512).
+- **name** (required): name of the light; the entity becomes `light.<name>`.
+- **type** (default `dimmer`):
+  - `fixed`: dummy channels only, with fixed values
+  - `binary`: single on/off channel
+  - `dimmer`: single channel
+  - `rgb`: red, green, blue
+  - `rgbw`: red, green, blue, white
+  - `rgbww`: red, green, blue, cool white, warm white
+  - `color_temp`: cool white, warm white
+  - `xy`: dimmer plus X/Y color
+- **transition** (default 0): default fade time in seconds; a transition sent from Home Assistant overrides it.
+- **output_correction**: dimming curve for this fixture; overrides the universe setting.
+- **channel_size** (default `8bit`): `8bit` (256 steps), `16bit` (65k steps), `24bit` or `32bit`.
+- **byte_order** (default `big`): byte order of multi-byte channels, `big` or `little`.
+- **min_temp** / **max_temp** (default `2700K` / `6500K`): color temperature range for `color_temp` and `rgbww`.
+- **channel_setup**: the fixture's channel layout (see below).
+
+### Channel layout (`channel_setup`)
 
 A string or list to customize the channel layout of your light.
 If a list is provided, fixed numeric values may be included.
@@ -253,73 +223,50 @@ _Staticly sets the green channel on 50% brightness_
 \* In the case of a white channel being used in an RGB light fixture, the white channel is automatically calculated.
 
 
-## Supported features
 
-- Color-Mode. 
-    This allows full independent control over: RGB setting, RGB brightness, Cool White brightness and Warm white brightness. with a separate over all brightness control. This allows you to sent the color and white levels to any value independently and then adjust the brightness of the whole light without affecting the color of the light.
-- 16 bit DMX output.
-    taking advantage of the separate brightness settings and the overall brightness allows lights to be dimmed to very low levels and still have a smooth fade due to the 65K steps you get from 16 bit
-- Transition time can be specified through services to fade to a color (for RGB fixtures) or value. This currently is set to run at 25 frames per second. 
-- Brightness: Once a channel is turned on brightness can be controlled through the Home Assistant interface.
-- Color temperature: For dual channel warm white/cool white fixtures this tunes the white temperature.
+## Features
+
+- **Color modes**: full independent control over RGB color, RGB brightness and cool/warm white, with a separate overall brightness. Set color and white levels independently, then dim the whole light without changing its color.
+- **16-bit output**: combined with the separate brightness control, lights can dim to very low levels and still fade smoothly thanks to the 65k steps of 16 bit.
+- **Transitions**: fade to a color or value with a transition time from Home Assistant.
+- **Color temperature**: tune the white temperature of dual-channel warm/cool white fixtures.
 
 ### Output correction
 
-- The graph shows different output depending on the output correction.
+Quadratic or cubic correction gives much smoother, more natural fades on LED strips. From left to right: linear (default), quadratic, cubic, quadruple.
 
-- Quadratic or cubic results in much smoother and more pleasant fades when using LED Strips.
-The graph shows different output depending on the output correction.
-
-From left to right:
-linear (default when nothing is set), quadratic, cubic then quadruple
 <img src='curves.svg'>
 
-#### Limitations
+## Tips
 
-- LEDS must be in same order as shown in channel
+- The DMX King eDMX4 Pro doesn't seem to work when it receives fewer than 16 channels. Work around this by turning off *send partial universe*, or by placing a fixture at channel 16 or higher.
+- DMX setups can create many frequently-changing entities, which Home Assistant records by default. This can bloat the database, especially with pixel strips where one strip is dozens of lights. Use names that share a prefix (e.g. `pixelstrip_1_pixel_1`) and exclude them from the recorder:
 
-- Notes DMX king eDMX4 Pro does not seem to work if you have send less than 16 channels. Work around just add a dummy light at channel 16 or higher
-
-#### Recorder issues
-
-- DMX entities can be numerous and frequently-changing, and Home Assistant records everything into its database by default.
-- This can degrade performance system-wide and cause database bloat, particularly with devices like pixel strips where a single "device" may be represented by dozens (or hundreds) of entities.
-- To stop Home Assistant from recording every change to every device, use wildcard-friendly entity names (e.g., "pixelstrip_1_pixel_1")  and exclude them from recording with entity globs in `configuration.yaml`.  E.g.,
-    ```
+    ```yaml
     recorder:
       exclude:
         entity_globs:
           - light.pixelstrip*
     ```
 
-#### Future improvements
+- To enable debug logging:
 
-- Lights are assigned a unique ID generated from the IP addreess, Port, Universe and Channel.
+    ```yaml
+    logger:
+      logs:
+        custom_components.dmx_lighting: debug
+    ```
 
+### Tested hardware
 
-#### Supported hardware
+- Should work with any Art-Net, KiNet or E1.31 sACN DMX interface.
+- Art-Net: DMX King eDMX4, ENTTEC DIN Ethergate 2.
+- sACN: esPixelStick, Falcon F16v2.
 
-- Should work with any Art-Net, KiNet or e1.31 sACN enabled DMX interface.
-- Artnet interface tested on DMX King eDMX4 and ENTTEC DIN Ethergate 2.
-- e1.31 sACN interface tested on esPixelStick and Falcon F16v2
+## Credits
 
+This project began as a fork of [Breina/ha-artnet-led](https://github.com/Breina/ha-artnet-led), which in turn built on work by [corb3000](https://github.com/corb3000), [jnimmo](https://github.com/jnimmo/hass-dmx) and [spacemanspiff2007](https://github.com/spacemanspiff2007/home-assistant-artnet). Thanks to everyone who contributed.
 
-## See Also
+## Legal
 
-* [Art-Net Wikipedia](https://en.wikipedia.org/wiki/Art-Net)
-* [Art-Net](https://art-net.org.uk/)
-* [Community support for Home Assistant DMX](https://community.home-assistant.io/t/dmx-lighting/2248)
-
-**Art-Net™ Designed by and Copyright Artistic Licence Holdings Ltd**
-
-
-To enable debug logging for this component:
-
-```yaml
-logger:
-  logs:
-    custom_components.artnet_led: debug
-```
-# Legal
-
-Art-Net™ Designed by and Copyright Artistic Licence
+Art-Net™ Designed by and Copyright Artistic Licence Holdings Ltd.

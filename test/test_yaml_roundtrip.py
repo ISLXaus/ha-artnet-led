@@ -2,7 +2,7 @@
 import pytest
 from homeassistant.setup import async_setup_component
 
-from custom_components.artnet_led.const import DOMAIN
+from custom_components.dmx_lighting.const import DOMAIN
 
 pytestmark = pytest.mark.usefixtures("socket_enabled")
 
@@ -29,14 +29,14 @@ async def test_export_import_roundtrip(hass, hass_ws_client):
     await hass.async_block_till_done()
     client = await hass_ws_client(hass)
 
-    await client.send_json({"id": 1, "type": "artnet_led/patch/export", "patch": PATCH})
+    await client.send_json({"id": 1, "type": "dmx_lighting/patch/export", "patch": PATCH})
     response = await client.receive_json()
     assert response["success"]
     yaml_text = response["result"]["yaml"]
     assert "10.0.0.162" in yaml_text
     assert "id:" not in yaml_text  # internal ids stripped for clean YAML
 
-    await client.send_json({"id": 2, "type": "artnet_led/patch/import", "content": yaml_text})
+    await client.send_json({"id": 2, "type": "dmx_lighting/patch/import", "content": yaml_text})
     response = await client.receive_json()
     assert response["success"]
     result = response["result"]
@@ -67,7 +67,7 @@ async def test_import_accepts_bare_node_list_and_flags_errors(hass, hass_ws_clie
           name: bad_universe_light
           type: dimmer
 """
-    await client.send_json({"id": 1, "type": "artnet_led/patch/import", "content": content})
+    await client.send_json({"id": 1, "type": "dmx_lighting/patch/import", "content": content})
     response = await client.receive_json()
     assert response["success"]
     result = response["result"]
@@ -83,14 +83,14 @@ async def test_import_rejects_garbage(hass, hass_ws_client):
     client = await hass_ws_client(hass)
 
     await client.send_json(
-        {"id": 1, "type": "artnet_led/patch/import", "content": "just a string"}
+        {"id": 1, "type": "dmx_lighting/patch/import", "content": "just a string"}
     )
     response = await client.receive_json()
     assert not response["success"]
     assert response["error"]["code"] == "invalid_structure"
 
     await client.send_json(
-        {"id": 2, "type": "artnet_led/patch/import", "content": "a: [unclosed"}
+        {"id": 2, "type": "dmx_lighting/patch/import", "content": "a: [unclosed"}
     )
     response = await client.receive_json()
     assert not response["success"]

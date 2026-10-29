@@ -1,6 +1,6 @@
 """Unit tests for patch validation and footprint math."""
-from custom_components.artnet_led.runtime import ArtNetRuntime
-from custom_components.artnet_led.validation import (
+from custom_components.dmx_lighting.runtime import DmxRuntime
+from custom_components.dmx_lighting.validation import (
     compute_channel_width,
     compute_dmx_footprint,
     validate_patch,
@@ -26,7 +26,7 @@ def test_footprint_16bit():
 
 
 async def test_validate_rejects_footprint_past_512(hass):
-    runtime = ArtNetRuntime.get(hass)
+    runtime = DmxRuntime.get(hass)
     patch = {
         "nodes": [
             {
@@ -42,7 +42,7 @@ async def test_validate_rejects_footprint_past_512(hass):
 
 
 async def test_validate_duplicate_names(hass):
-    runtime = ArtNetRuntime.get(hass)
+    runtime = DmxRuntime.get(hass)
     patch = {
         "nodes": [
             {
@@ -63,7 +63,7 @@ async def test_validate_duplicate_names(hass):
 
 
 async def test_validate_ok_patch(hass):
-    runtime = ArtNetRuntime.get(hass)
+    runtime = DmxRuntime.get(hass)
     patch = {
         "nodes": [
             {

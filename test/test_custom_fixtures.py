@@ -6,10 +6,10 @@ import pytest
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.artnet_led.const import DOMAIN, STORAGE_KEY
-from custom_components.artnet_led.runtime import ArtNetRuntime
-from custom_components.artnet_led.util.channel_switch import from_values, off_values
-from custom_components.artnet_led.validation import (
+from custom_components.dmx_lighting.const import DOMAIN, STORAGE_KEY
+from custom_components.dmx_lighting.runtime import DmxRuntime
+from custom_components.dmx_lighting.channel_switch import from_values, off_values
+from custom_components.dmx_lighting.validation import (
     compute_dmx_footprint,
     patch_node_to_setup_config,
     validate_patch,
@@ -61,7 +61,7 @@ def _patch(*devices) -> dict:
 
 
 def _errors(hass, *devices) -> list[dict]:
-    return validate_patch(hass, _patch(*devices), ArtNetRuntime.get(hass))
+    return validate_patch(hass, _patch(*devices), DmxRuntime.get(hass))
 
 
 # ---- validation ---------------------------------------------------------------
@@ -163,7 +163,7 @@ async def test_save_stores_layout_and_labels(hass, hass_ws_client, hass_storage)
     await hass.async_block_till_done()
     client = await hass_ws_client(hass)
 
-    await client.send_json({"id": 1, "type": "artnet_led/patch/save",
+    await client.send_json({"id": 1, "type": "dmx_lighting/patch/save",
                             "patch": _patch(CUSTOM_RGB, CUSTOM_DIMMER)})
     response = await client.receive_json()
     assert response["success"] and response["result"]["success"], response
@@ -175,7 +175,7 @@ async def test_save_stores_layout_and_labels(hass, hass_ws_client, hass_storage)
     assert stored[1]["channel_labels"] == [None, "Curve"]
 
     # Invalid dummy values are refused and not stored.
-    await client.send_json({"id": 2, "type": "artnet_led/patch/save",
+    await client.send_json({"id": 2, "type": "dmx_lighting/patch/save",
                             "patch": _patch({**CUSTOM_DIMMER, "channel_setup": ["d", 999]})})
     response = await client.receive_json()
     assert response["result"]["success"] is False
@@ -189,7 +189,7 @@ async def test_yaml_roundtrip_keeps_dummy_channels(hass, hass_ws_client):
     await hass.async_block_till_done()
     client = await hass_ws_client(hass)
 
-    await client.send_json({"id": 1, "type": "artnet_led/patch/export",
+    await client.send_json({"id": 1, "type": "dmx_lighting/patch/export",
                             "patch": _patch(CUSTOM_RGB, CUSTOM_DIMMER)})
     response = await client.receive_json()
     yaml_text = response["result"]["yaml"]
@@ -197,7 +197,7 @@ async def test_yaml_roundtrip_keeps_dummy_channels(hass, hass_ws_client):
     assert "channel_setup: [d, r, g, b, 42, 200]" in yaml_text
     assert "channel_labels: [null, null, null, null, Mode, Strobe]" in yaml_text
 
-    await client.send_json({"id": 2, "type": "artnet_led/patch/import", "content": yaml_text})
+    await client.send_json({"id": 2, "type": "dmx_lighting/patch/import", "content": yaml_text})
     response = await client.receive_json()
     result = response["result"]
     assert result["valid"], result["errors"]
@@ -216,9 +216,9 @@ async def test_yaml_roundtrip_tricky_labels(hass, hass_ws_client):
 
     device = {**CUSTOM_DIMMER, "channel_setup": ["d", 0, 1, 2],
               "channel_labels": [None, "On", "12", "Mode, slow"]}
-    await client.send_json({"id": 1, "type": "artnet_led/patch/export", "patch": _patch(device)})
+    await client.send_json({"id": 1, "type": "dmx_lighting/patch/export", "patch": _patch(device)})
     yaml_text = (await client.receive_json())["result"]["yaml"]
-    await client.send_json({"id": 2, "type": "artnet_led/patch/import", "content": yaml_text})
+    await client.send_json({"id": 2, "type": "dmx_lighting/patch/import", "content": yaml_text})
     result = (await client.receive_json())["result"]
     assert result["valid"], result["errors"]
     imported = result["patch"]["nodes"][0]["universes"]["1"]["devices"][0]
@@ -244,7 +244,7 @@ nodes:
             channel_setup: [d, r, g, b, w, 0, 300]
             channel_labels: [null, null, null, null, null, Mode, Macro]
 """
-    await client.send_json({"id": 1, "type": "artnet_led/patch/import", "content": content})
+    await client.send_json({"id": 1, "type": "dmx_lighting/patch/import", "content": content})
     result = (await client.receive_json())["result"]
     assert result["valid"] is False
     assert [e["path"] for e in result["errors"]] == [
@@ -255,7 +255,7 @@ nodes:
 
 
 async def _values(hass, name: str) -> list[int]:
-    handle = next(h for h in ArtNetRuntime.get(hass).handles() if h.host == "127.0.0.1")
+    handle = next(h for h in DmxRuntime.get(hass).handles() if h.host == "127.0.0.1")
     channel = handle.node.get_universe(1).get_channel(name)
     # Let any running fade finish.
     for _ in range(50):

@@ -3,9 +3,9 @@ import asyncio
 
 import pytest
 
-from custom_components.artnet_led.const import DOMAIN
-from custom_components.artnet_led.monitor import DmxMonitor
-from custom_components.artnet_led.runtime import ArtNetRuntime, NodeHandle
+from custom_components.dmx_lighting.const import DOMAIN
+from custom_components.dmx_lighting.monitor import DmxMonitor
+from custom_components.dmx_lighting.runtime import DmxRuntime, NodeHandle
 
 
 class _FakeUniverse:
@@ -23,7 +23,7 @@ class _FakeNode:
 
 @pytest.fixture
 def fake_universe(hass):
-    runtime = ArtNetRuntime.get(hass)
+    runtime = DmxRuntime.get(hass)
     universe = _FakeUniverse()
     handle = NodeHandle(
         key="fake:1", node=_FakeNode(universe), owner="test",

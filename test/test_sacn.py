@@ -4,9 +4,9 @@ import asyncio
 import pytest
 from pyartnet.base.network import UnicastNetworkTarget
 
-from custom_components.artnet_led.bridge.sacn_node import PrioritySacnNode
-from custom_components.artnet_led.runtime import ArtNetRuntime
-from custom_components.artnet_led.validation import validate_patch
+from custom_components.dmx_lighting.sacn import PrioritySacnNode
+from custom_components.dmx_lighting.runtime import DmxRuntime
+from custom_components.dmx_lighting.validation import validate_patch
 
 pytestmark = pytest.mark.usefixtures("socket_enabled")
 
@@ -26,7 +26,7 @@ def _sacn_patch(universe: str) -> dict:
 
 async def test_validate_rejects_sacn_universe_0(hass):
     """Regression: sACN universe 0 crashed light platform setup (E1.31 requires >= 1)."""
-    runtime = ArtNetRuntime.get(hass)
+    runtime = DmxRuntime.get(hass)
     errors = validate_patch(hass, _sacn_patch("0"), runtime)
     assert any(e["code"] == "invalid_universe" for e in errors)
 
@@ -159,7 +159,7 @@ async def test_runtime_creates_multicast_sacn_node(hass):
 
     from pyartnet.base.network import MulticastNetworkTarget
 
-    from custom_components.artnet_led.validation import patch_node_to_setup_config
+    from custom_components.dmx_lighting.validation import patch_node_to_setup_config
 
     cfg = patch_node_to_setup_config(
         {
@@ -168,9 +168,9 @@ async def test_runtime_creates_multicast_sacn_node(hass):
             "universes": {},
         }
     )
-    runtime = ArtNetRuntime.get(hass)
+    runtime = DmxRuntime.get(hass)
     with patch(
-        "custom_components.artnet_led.client.net_utils.get_private_ip",
+        "custom_components.dmx_lighting.sacn.get_private_ip",
         return_value="127.0.0.1",
     ):
         handle = await runtime.acquire_node(cfg, owner="test")

@@ -1,4 +1,4 @@
 {
-    "name": "Art-net LED Lighting for DMX",
-    "render_readme": true
-  }
+  "name": "DMX Lighting (Art-Net, sACN, KiNet)",
+  "render_readme": true
+}
