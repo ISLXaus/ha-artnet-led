@@ -56,8 +56,14 @@ export interface PatchError {
   message: string;
 }
 
+export interface HassEntityLite {
+  state: string;
+  attributes: Record<string, unknown>;
+}
+
 export interface HomeAssistant {
   callWS<T>(msg: Record<string, unknown>): Promise<T>;
+  states?: Record<string, HassEntityLite>;
   connection: {
     subscribeMessage<T>(
       callback: (result: T) => void,
@@ -202,6 +208,35 @@ export function uuid(): string {
 export function deviceColor(index: number): string {
   const hue = (index * 137.5) % 360;
   return `hsl(${hue}, 45%, 45%)`;
+}
+
+/** unique_id → entity_id for this integration's lights (from dmx_lighting/entity_map/get). */
+export type EntityMap = Record<string, string>;
+
+/**
+ * The light entity a saved fixture already has, if any. Mirrors entity_factory.py:
+ * unique_id is "dmx:<host>/<universe>/<channel>", but an existing entity with the
+ * same name keeps its own unique_id, so fall back to light.<slug>.
+ */
+export function existingEntityId(
+  hass: HomeAssistant | undefined,
+  entityMap: EntityMap,
+  host: string,
+  universe: string | number,
+  device: PatchDevice
+): string | undefined {
+  const byUniqueId = entityMap[`dmx:${host}/${universe}/${device.channel}`];
+  if (byUniqueId) return byUniqueId;
+  const bySlug = `light.${slugifyName(device.name ?? '')}`;
+  if (Object.values(entityMap).includes(bySlug) || hass?.states?.[bySlug]) return bySlug;
+  return undefined;
+}
+
+/** Open Home Assistant's own more-info dialog (state, controls, settings) for an entity. */
+export function openMoreInfo(from: HTMLElement, entityId: string): void {
+  from.dispatchEvent(
+    new CustomEvent('hass-more-info', { detail: { entityId }, bubbles: true, composed: true })
+  );
 }
 
 export function slugifyName(name: string): string {

@@ -7,8 +7,11 @@ import {
   PatchNode,
   channelRole,
   channelWidth,
+  EntityMap,
   deviceColor,
+  existingEntityId,
   footprint,
+  openMoreInfo,
   hasCustomSetup,
   slugifyName,
 } from './model';
@@ -39,6 +42,7 @@ export class DmxFixtureList extends LitElement {
   @property({ attribute: false }) errors: PatchError[] = [];
   /** Universe new fixtures go into (the selected universe tab). */
   @property() addUniverse = '';
+  @property({ attribute: false }) entityMap: EntityMap = {};
 
   @state() private _filter = '';
   @state() private _sort: SortKey = 'address';
@@ -126,9 +130,8 @@ export class DmxFixtureList extends LitElement {
       : html`<span class="default">default</span>`}`;
   }
 
-  private _state(entityId: string) {
-    const st = (this.hass as unknown as { states?: Record<string, { state: string }> })
-      ?.states?.[entityId]?.state;
+  private _state(entityId: string | undefined) {
+    const st = entityId ? this.hass?.states?.[entityId]?.state : undefined;
     if (!st) return html`<span class="state none" title="Not created yet — Save & Apply">–</span>`;
     return html`<span class="state ${st}" title=${st}></span>`;
   }
@@ -180,7 +183,9 @@ export class DmxFixtureList extends LitElement {
                 <tbody>
                   ${rows.map((r) => {
                     const d = r.device;
-                    const entityId = `light.${slugifyName(d.name)}`;
+                    const existing = existingEntityId(
+                      this.hass, this.entityMap, this.node.host, r.universe, d);
+                    const entityId = existing ?? `light.${slugifyName(d.name)}`;
                     const problem = r.errors.length
                       ? r.errors.map((e) => e.message).join('\n')
                       : r.overlap
@@ -207,7 +212,21 @@ export class DmxFixtureList extends LitElement {
                           ${d.friendly_name
                             ? html`<div class="sub">${d.friendly_name}</div>`
                             : nothing}
-                          <div class="entity">${this._state(entityId)}<code>${entityId}</code></div>
+                          <div class="entity">
+                            ${this._state(existing)}${existing
+                              ? html`<button
+                                  class="entity-link"
+                                  title="Open ${existing}"
+                                  @click=${(e: Event) => {
+                                    e.stopPropagation();
+                                    openMoreInfo(this, existing);
+                                  }}
+                                  @keydown=${(e: KeyboardEvent) => e.stopPropagation()}
+                                >
+                                  <code>${existing}</code>
+                                </button>`
+                              : html`<code>${entityId}</code>`}
+                          </div>
                           ${problem ? html`<div class="problem">⚠ ${problem}</div>` : nothing}
                         </td>
                         <td>
@@ -414,6 +433,17 @@ export class DmxFixtureList extends LitElement {
     }
     .entity code {
       font-size: 0.75rem;
+    }
+    .entity-link {
+      padding: 0;
+      border: none;
+      background: none;
+      color: var(--primary-color, #03a9f4);
+      cursor: pointer;
+      font: inherit;
+    }
+    .entity-link:hover code {
+      text-decoration: underline;
     }
     .state {
       display: inline-block;

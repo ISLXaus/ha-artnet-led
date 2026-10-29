@@ -8,12 +8,14 @@ import {
   PatchError,
   PatchUniverse,
   CORRECTIONS,
+  EntityMap,
+  existingEntityId,
   footprint,
   minUniverse,
   nodeKey,
   uuid,
 } from './model';
-import { exportPatchYaml, getPatch, importPatchYaml, savePatch } from './ws';
+import { exportPatchYaml, getEntityMap, getPatch, importPatchYaml, savePatch } from './ws';
 import { newDevice, newNode } from './dialogs';
 import './universe-grid';
 import './fixture-list';
@@ -41,6 +43,8 @@ export class DmxPatchPanel extends LitElement {
   @state() private _selected = '';
   @state() private _selectedUniverse = '';
   @state() private _dialog: DialogState = { kind: 'none' };
+  /** unique_id → entity_id of existing lights, refreshed when it might have changed. */
+  @state() private _entityMap: EntityMap = {};
   /** Fixture view: the 512-channel grid, or a table of all fixtures on the node. */
   @state() private _view: 'grid' | 'list' = DmxPatchPanel._loadView();
 
@@ -87,8 +91,17 @@ export class DmxPatchPanel extends LitElement {
       this._errors = result.errors ?? [];
       this._loaded = true;
       this._autoSelect();
+      this._refreshEntityMap();
     } catch (err) {
       this._showToast(`Failed to load patch: ${err}`);
+    }
+  }
+
+  private async _refreshEntityMap() {
+    try {
+      this._entityMap = (await getEntityMap(this.hass)).entities ?? {};
+    } catch {
+      // Not critical: the editor then just doesn't offer the entity shortcut.
     }
   }
 
@@ -320,6 +333,8 @@ export class DmxPatchPanel extends LitElement {
   }
 
   private _onEditDevice(e: CustomEvent) {
+    // Entities are (re)created on Save & Apply, so look them up fresh.
+    this._refreshEntityMap();
     const universeNr = e.detail.universe ?? this._selectedUniverse;
     this._selectedUniverse = universeNr;
     this._dialog = {
@@ -491,6 +506,7 @@ export class DmxPatchPanel extends LitElement {
                         .nodeIndex=${Number(this._selected.split(':')[1])}
                         .errors=${this._errors}
                         .addUniverse=${this._selectedUniverse}
+                        .entityMap=${this._entityMap}
                         @add-device=${this._onAddDevice}
                         @edit-device=${this._onEditDevice}
                       ></dmx-fixture-list>
@@ -566,6 +582,16 @@ export class DmxPatchPanel extends LitElement {
             <dmx-device-dialog
               .device=${this._dialog.device}
               ?isNew=${this._dialog.isNew}
+              .hass=${this.hass}
+              .entityId=${this._dialog.isNew
+                ? ''
+                : (existingEntityId(
+                    this.hass,
+                    this._entityMap,
+                    this._currentNode()?.host ?? '',
+                    this._dialog.universeNr,
+                    this._dialog.device
+                  ) ?? '')}
               @panel-dialog-closed=${() => (this._dialog = { kind: 'none' })}
               @save-device=${this._onSaveDevice}
               @delete-device=${this._onDeleteDevice}

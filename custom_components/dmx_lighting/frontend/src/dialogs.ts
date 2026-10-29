@@ -12,8 +12,10 @@ import {
   MAX_LABEL_LENGTH,
   ChannelEntry,
   byteSize,
+  HomeAssistant,
   footprint,
   hasCustomSetup,
+  openMoreInfo,
   isFixedValue,
   minUniverse,
   setupEntries,
@@ -189,9 +191,54 @@ export class DmxDeviceDialog extends LitElement {
   @property({ attribute: false }) device!: PatchDevice;
   @property({ type: Boolean }) isNew = false;
   @property() errorText = '';
+  @property({ attribute: false }) hass?: HomeAssistant;
+  /** The light entity this (saved) fixture already has, if any. */
+  @property() entityId = '';
 
   @state() private _working!: PatchDevice;
   @state() private _count = 1;
+  /** Hidden (edits kept) while Home Assistant's entity dialog is open on top. */
+  @state() private _suspended = false;
+  private _stopWatching?: () => void;
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._stopWatching?.();
+  }
+
+  /**
+   * Open the entity's more-info dialog. It renders underneath this panel's
+   * dialog, so hide ours until HA reports the more-info dialog closed.
+   */
+  private _openEntity() {
+    this._suspended = true;
+    openMoreInfo(this, this.entityId);
+
+    const moreInfo = () =>
+      document
+        .querySelector('home-assistant')
+        ?.shadowRoot?.querySelector('ha-more-info-dialog') as
+        | (HTMLElement & { _entityId?: string | null })
+        | null;
+    const resume = () => {
+      this._stopWatching?.();
+      this._suspended = false;
+    };
+    const onClosed = (e: Event) => {
+      if ((e as CustomEvent).detail?.dialog === 'ha-more-info-dialog') resume();
+    };
+    window.addEventListener('dialog-closed', onClosed);
+    // Fallback in case a frontend version stops firing dialog-closed.
+    const timer = window.setInterval(() => {
+      const dlg = moreInfo();
+      if (!dlg || !dlg._entityId) resume();
+    }, 500);
+    this._stopWatching = () => {
+      window.removeEventListener('dialog-closed', onClosed);
+      window.clearInterval(timer);
+      this._stopWatching = undefined;
+    };
+  }
   /** Custom channel layout being edited, or null for the type's default layout. */
   @state() private _rows: ChannelRow[] | null = null;
 
@@ -205,6 +252,35 @@ export class DmxDeviceDialog extends LitElement {
 
   private _set<K extends keyof PatchDevice>(key: K, value: PatchDevice[K]) {
     this._working = { ...this._working, [key]: value };
+  }
+
+  /** Shortcut to the fixture's light entity, for fixtures that already have one. */
+  private _renderEntity() {
+    if (this.isNew) return nothing;
+    if (!this.entityId) {
+      return html`<div class="entity-row muted">
+        No entity yet — it is created when you Save &amp; Apply.
+      </div>`;
+    }
+    const st = this.hass?.states?.[this.entityId];
+    const state = st?.state ?? 'unknown';
+    const friendly = (st?.attributes?.friendly_name as string | undefined) ?? '';
+    return html`
+      <div class="entity-row">
+        <span class="dot ${state}" title=${state}></span>
+        <span class="entity-text">
+          <code>${this.entityId}</code>
+          <small>${friendly && friendly !== this.entityId ? `${friendly} · ` : ''}${state}</small>
+        </span>
+        <button
+          class="open-entity"
+          title="Open the entity (controls, history, settings)"
+          @click=${this._openEntity}
+        >
+          Open entity
+        </button>
+      </div>
+    `;
   }
 
   private _setRows(rows: ChannelRow[] | null) {
@@ -360,9 +436,15 @@ export class DmxDeviceDialog extends LitElement {
     const showTemp = d.type === 'color_temp' || d.type === 'rgbww';
 
     return html`
-      <div class="backdrop" @click=${this._backdropClick}>
+      <div
+        class="backdrop"
+        style=${this._suspended ? 'visibility: hidden' : ''}
+        @click=${this._backdropClick}
+      >
         <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
           <h3>${this.isNew ? 'Add fixture' : `Edit ${this.device.name}`}</h3>
+
+          ${this._renderEntity()}
 
           <label>Name (entity id becomes light.&lt;slug&gt;)</label>
           <input
@@ -565,6 +647,54 @@ export class DmxDeviceDialog extends LitElement {
     css`
       .dialog {
         width: min(540px, calc(100vw - 32px));
+      }
+      .entity-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: var(--secondary-background-color, #f5f5f5);
+      }
+      .entity-row.muted {
+        font-size: 0.8rem;
+        color: var(--secondary-text-color, #727272);
+      }
+      .entity-text {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .entity-text code {
+        font-size: 0.85rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .entity-text small {
+        font-size: 0.75rem;
+        color: var(--secondary-text-color, #727272);
+      }
+      .dot {
+        flex: none;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--disabled-text-color, #9e9e9e);
+      }
+      .dot.on {
+        background: var(--state-light-active-color, #ffc107);
+      }
+      .dot.unavailable {
+        background: var(--error-color, #db4437);
+      }
+      button.open-entity {
+        flex: none;
+        padding: 6px 12px;
+        background: none;
+        border: 1px solid var(--primary-color, #03a9f4);
+        color: var(--primary-color, #03a9f4);
       }
       label.check {
         display: flex;
