@@ -131,6 +131,47 @@ export class DmxFixtureList extends LitElement {
       : html`<span class="default">default</span>`}`;
   }
 
+  /**
+   * The light's current colour, filled to its brightness, from its HA state.
+   * Updates live because the panel re-renders whenever hass changes.
+   */
+  private _liveTile(entityId: string | undefined, device: PatchDevice) {
+    const st = entityId ? this.hass?.states?.[entityId] : undefined;
+    if (!st) {
+      return html`<div class="tile none" title="No entity yet — Save & Apply">–</div>`;
+    }
+    if (st.state !== 'on') {
+      const label = st.state === 'off' ? 'off' : st.state;
+      return html`<div class="tile off ${st.state}" title=${`${entityId}: ${label}`}>${label}</div>`;
+    }
+    const attrs = st.attributes ?? {};
+    const rgb = Array.isArray(attrs.rgb_color)
+      ? (attrs.rgb_color as number[])
+      : [255, 255, 255]; // dimmer / on-off fixtures: plain white
+    const brightness = typeof attrs.brightness === 'number' ? attrs.brightness : 255;
+    const pct = Math.round((brightness / 255) * 100);
+    const [r, g, b] = rgb.map((v) => Math.round(Number(v) || 0));
+    const color = `rgb(${r}, ${g}, ${b})`;
+    // Dark text on light colours, light text on dark ones (once filled past the label).
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    const ink = pct >= 50 && luminance > 0.6 ? '#000' : '#fff';
+    const detail = [
+      Array.isArray(attrs.rgb_color) ? `RGB ${r}, ${g}, ${b}` : '',
+      typeof attrs.color_temp_kelvin === 'number' ? `${attrs.color_temp_kelvin} K` : '',
+      `${pct}%`,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    return html`<div
+      class="tile on"
+      style="--tile-color: ${color}; --tile-level: ${pct}%; --tile-ink: ${ink}"
+      title="${entityId} (${device.type}): ${detail}"
+    >
+      <span class="fill"></span>
+      <span class="pct">${pct}%</span>
+    </div>`;
+  }
+
   private _state(entityId: string | undefined) {
     const st = entityId ? this.hass?.states?.[entityId]?.state : undefined;
     if (!st) return html`<span class="state none" title="Not created yet — Save & Apply">–</span>`;
@@ -179,6 +220,7 @@ export class DmxFixtureList extends LitElement {
                     ${this._header('type', 'Type')}
                     ${this._header('address', 'Address')}
                     <th>Channels</th>
+                    <th class="live-col">Output</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -251,6 +293,7 @@ export class DmxFixtureList extends LitElement {
                           ${r.first === r.last ? r.first : `${r.first}–${r.last}`}
                         </td>
                         <td class="layout">${this._layout(d)}</td>
+                        <td class="live-col">${this._liveTile(existing, d)}</td>
                       </tr>
                     `;
                   })}
@@ -477,6 +520,54 @@ export class DmxFixtureList extends LitElement {
       background: none;
       color: var(--secondary-text-color);
     }
+    .live-col {
+      width: 64px;
+      text-align: center;
+    }
+    .tile {
+      position: relative;
+      width: 56px;
+      height: 40px;
+      border-radius: 6px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-variant-numeric: tabular-nums;
+      background: #111;
+      color: var(--secondary-text-color);
+      border: 1px solid var(--divider-color, #e0e0e0);
+      box-sizing: border-box;
+    }
+    .tile.on {
+      /* Dim backdrop of the same colour, so low levels still show the hue. */
+      background: color-mix(in srgb, var(--tile-color) 22%, #111);
+      color: #fff;
+    }
+    .tile .fill {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: var(--tile-level);
+      background: var(--tile-color);
+      transition: height 0.3s ease, background-color 0.3s ease;
+    }
+    .tile .pct {
+      position: relative;
+      font-weight: 600;
+      color: var(--tile-ink);
+      text-shadow: 0 0 3px rgba(0, 0, 0, 0.45);
+    }
+    .tile.unavailable {
+      color: var(--error-color, #db4437);
+      font-size: 0.65rem;
+    }
+    .tile.none {
+      background: none;
+      border-style: dashed;
+    }
     /* Phones: each fixture becomes a card instead of a squeezed table row. */
     @media (max-width: 600px) {
       .table-wrap {
@@ -518,12 +609,18 @@ export class DmxFixtureList extends LitElement {
         font-size: 0.8rem;
       }
       td.address {
-        grid-column: 2 / -1;
+        grid-column: 2;
         margin-top: 4px;
       }
       td.layout {
-        grid-column: 2 / -1;
+        grid-column: 2;
         margin-top: 2px;
+      }
+      td.live-col {
+        grid-column: 3;
+        grid-row: 2 / span 2;
+        align-self: end;
+        width: auto;
       }
     }
     .empty {
