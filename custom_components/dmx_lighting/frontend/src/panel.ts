@@ -16,6 +16,7 @@ import {
 import { exportPatchYaml, getPatch, importPatchYaml, savePatch } from './ws';
 import { newDevice, newNode } from './dialogs';
 import './universe-grid';
+import './fixture-list';
 import './dialogs';
 
 type DialogState =
@@ -40,6 +41,25 @@ export class DmxPatchPanel extends LitElement {
   @state() private _selected = '';
   @state() private _selectedUniverse = '';
   @state() private _dialog: DialogState = { kind: 'none' };
+  /** Fixture view: the 512-channel grid, or a table of all fixtures on the node. */
+  @state() private _view: 'grid' | 'list' = DmxPatchPanel._loadView();
+
+  private static _loadView(): 'grid' | 'list' {
+    try {
+      return localStorage.getItem('dmx_lighting.view') === 'list' ? 'list' : 'grid';
+    } catch {
+      return 'grid';
+    }
+  }
+
+  private _setView(view: 'grid' | 'list') {
+    this._view = view;
+    try {
+      localStorage.setItem('dmx_lighting.view', view);
+    } catch {
+      // Storage unavailable (private window etc.); the choice just isn't remembered.
+    }
+  }
 
   private _toastTimer?: number;
 
@@ -272,20 +292,41 @@ export class DmxPatchPanel extends LitElement {
   // ---- device CRUD --------------------------------------------------------
 
   private _onAddDevice(e: CustomEvent) {
+    const universeNr = this._selectedUniverse;
+    if (!universeNr) {
+      this._showToast('Add a universe first');
+      return;
+    }
+    // From the list view there is no clicked cell: use the first free channel.
+    const channel = e.detail.channel ?? this._firstFreeChannel(universeNr);
     this._dialog = {
       kind: 'device',
-      device: newDevice(e.detail.channel),
+      device: newDevice(channel),
       isNew: true,
-      universeNr: this._selectedUniverse,
+      universeNr,
     };
   }
 
+  private _firstFreeChannel(universeNr: string): number {
+    const spans = (this._currentUniverses()?.[universeNr]?.devices ?? [])
+      .map((d) => footprint(d))
+      .sort((a, b) => a[0] - b[0]);
+    let channel = 1;
+    for (const [first, last] of spans) {
+      if (channel < first) break;
+      channel = Math.max(channel, last + 1);
+    }
+    return Math.min(channel, 512);
+  }
+
   private _onEditDevice(e: CustomEvent) {
+    const universeNr = e.detail.universe ?? this._selectedUniverse;
+    this._selectedUniverse = universeNr;
     this._dialog = {
       kind: 'device',
       device: e.detail.device,
       isNew: false,
-      universeNr: this._selectedUniverse,
+      universeNr,
     };
   }
 
@@ -399,6 +440,22 @@ export class DmxPatchPanel extends LitElement {
             : html`
                 <div class="node-bar">
                   <h2>${node.host} <small>(${node.node_type})</small></h2>
+                  <span class="view-toggle" role="group" aria-label="Fixture view">
+                    <button
+                      class=${this._view === 'grid' ? 'active' : ''}
+                      aria-pressed=${this._view === 'grid'}
+                      @click=${() => this._setView('grid')}
+                    >
+                      Grid
+                    </button>
+                    <button
+                      class=${this._view === 'list' ? 'active' : ''}
+                      aria-pressed=${this._view === 'list'}
+                      @click=${() => this._setView('list')}
+                    >
+                      List
+                    </button>
+                  </span>
                   <button @click=${this._editNode}>Node settings</button>
                 </div>
 
@@ -426,7 +483,19 @@ export class DmxPatchPanel extends LitElement {
                     : nothing}
                 </div>
 
-                ${universe
+                ${this._view === 'list'
+                  ? html`
+                      <dmx-fixture-list
+                        .hass=${this.hass}
+                        .node=${node}
+                        .nodeIndex=${Number(this._selected.split(':')[1])}
+                        .errors=${this._errors}
+                        .addUniverse=${this._selectedUniverse}
+                        @add-device=${this._onAddDevice}
+                        @edit-device=${this._onEditDevice}
+                      ></dmx-fixture-list>
+                    `
+                  : universe
                   ? html`
                       <div class="universe-options">
                         <label>
@@ -661,9 +730,26 @@ export class DmxPatchPanel extends LitElement {
     }
     .node-bar {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 16px;
+      gap: 8px 16px;
       margin-bottom: 12px;
+    }
+    .view-toggle {
+      display: inline-flex;
+      margin-left: auto;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--divider-color, #e0e0e0);
+    }
+    .view-toggle button {
+      border-radius: 0;
+      padding: 6px 14px;
+      background: none;
+    }
+    .view-toggle button.active {
+      background: var(--primary-color);
+      color: var(--text-primary-color, #fff);
     }
     .node-bar h2 {
       margin: 0;

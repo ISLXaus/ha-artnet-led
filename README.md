@@ -48,6 +48,7 @@ The **DMX Patch** panel in the Home Assistant sidebar (admin users only) is wher
 
 * **Nodes**: add Art-Net, sACN or KiNet nodes with all their options (see [Node options](#node-options)).
 * **Universes**: a 512-channel grid per universe. Click an empty channel to place a fixture, click a fixture to edit or delete it, drag it to re-address it. Channel overlaps are highlighted and rejected on save.
+* **Fixture list**: switch a node from *Grid* to *List* to see all its fixtures across every universe in one table — name, entity, type, address (universe and channel range) and channel layout, with dummy channels shown by label and value. Filter by name, type, entity or label, sort by name, type or address, and click a fixture to edit it. Fixtures with overlaps or validation errors are highlighted, and a dot shows whether each light is on. *Add fixture* places a new one at the first free channel of the selected universe. The panel remembers which view you used last.
 * **Live apply**: *Save & Apply* takes effect immediately — no Home Assistant restart. Entities keep their identity across saves (unique IDs are derived from `host/universe/channel`, so moving a fixture to another channel creates a new entity).
 * **Live DMX values**: toggle *Live DMX values* on any universe to watch the actual channel values update in real time (10 Hz).
 
