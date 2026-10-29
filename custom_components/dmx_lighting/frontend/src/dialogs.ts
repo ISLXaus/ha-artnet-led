@@ -66,6 +66,24 @@ function rowsToSetup(rows: ChannelRow[]): Pick<PatchDevice, 'channel_setup' | 'c
   };
 }
 
+/**
+ * Close-on-backdrop that ignores drags. A click event fires on the element where
+ * the mouse is released, so selecting text in a field and letting go outside the
+ * dialog used to count as a backdrop click and close it. Only close when the
+ * press also started on the backdrop itself.
+ */
+let pressStartedOnBackdrop = false;
+
+function backdropPointerDown(e: PointerEvent) {
+  pressStartedOnBackdrop = e.target === e.currentTarget;
+}
+
+function isBackdropClick(e: MouseEvent): boolean {
+  const result = pressStartedOnBackdrop && e.target === e.currentTarget;
+  pressStartedOnBackdrop = false;
+  return result;
+}
+
 const sharedDialogStyles = css`
   .backdrop {
     position: fixed;
@@ -444,7 +462,8 @@ export class DmxDeviceDialog extends LitElement {
       <div
         class="backdrop"
         style=${this._suspended ? 'visibility: hidden' : ''}
-        @click=${this._backdropClick}
+        @pointerdown=${backdropPointerDown}
+        @click=${(e: MouseEvent) => isBackdropClick(e) && this._cancel()}
       >
         <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
           <h3>${this.isNew ? 'Add fixture' : `Edit ${this.device.name}`}</h3>
@@ -616,10 +635,6 @@ export class DmxDeviceDialog extends LitElement {
         </div>
       </div>
     `;
-  }
-
-  private _backdropClick() {
-    this._cancel();
   }
 
   private _cancel() {
@@ -882,7 +897,11 @@ export class DmxNodeDialog extends LitElement {
   render() {
     const n = this._working;
     return html`
-      <div class="backdrop" @click=${this._cancel}>
+      <div
+        class="backdrop"
+        @pointerdown=${backdropPointerDown}
+        @click=${(e: MouseEvent) => isBackdropClick(e) && this._cancel()}
+      >
         <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
           <h3>${this.isNew ? 'Add node' : `Edit ${this.node.host}`}</h3>
 
@@ -1130,7 +1149,11 @@ export class DmxUniverseDialog extends LitElement {
 
   render() {
     return html`
-      <div class="backdrop" @click=${this._cancel}>
+      <div
+        class="backdrop"
+        @pointerdown=${backdropPointerDown}
+        @click=${(e: MouseEvent) => isBackdropClick(e) && this._cancel()}
+      >
         <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
           <h3>
             ${this.mode === 'add' ? 'Add universe' : `Renumber universe ${this.current}`}
@@ -1205,7 +1228,11 @@ export class DmxYamlDialog extends LitElement {
 
   render() {
     return html`
-      <div class="backdrop" @click=${this._cancel}>
+      <div
+        class="backdrop"
+        @pointerdown=${backdropPointerDown}
+        @click=${(e: MouseEvent) => isBackdropClick(e) && this._cancel()}
+      >
         <div class="dialog wide" @click=${(e: Event) => e.stopPropagation()}>
           <h3>Patch as YAML</h3>
           <div class="hint">
