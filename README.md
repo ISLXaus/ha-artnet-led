@@ -1,10 +1,14 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
+<img src="custom_components/dmx_lighting/brand/icon@2x.png" alt="DMX Lighting logo" width="112" align="right">
+
 # DMX Lighting for Home Assistant
 
 Control DMX lighting from Home Assistant over **Art-Net**, **sACN (E1.31)** and **KiNet**. Fixtures are patched in a visual **DMX Patch** panel in the sidebar and show up as ordinary Home Assistant lights: dimmers, RGB/RGBW/RGBWW, tunable white, XY and on/off, at 8, 16, 24 or 32 bits per channel.
 
 Output is one-way: Home Assistant sends DMX to your nodes. Output uses [pyartnet](https://github.com/spacemanspiff2007/PyArtNet).
+
+The integration ships its own logo (`custom_components/dmx_lighting/brand/`, light and dark versions; sources in `assets/brand/`). Home Assistant 2026.3 and later show it on the integrations page; older versions show a placeholder.
 
 ## Installation
 
