@@ -546,3 +546,54 @@ async def test_effects_send_at_the_node_frame_rate(hass, hass_storage, max_fps):
     await _turn(hass, "turn_off", "light.fx_chase")
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+# ---- Home Assistant groups as targets --------------------------------------------------
+
+
+async def test_group_entries_validate(hass):
+    ok = {**CHASE, "fixtures": ["group:light.front_wash", "chase_1"]}
+    assert _errors(hass, ok) == []
+    bad = {**CHASE, "fixtures": ["group:switch.pump"]}
+    assert ("effects/0/fixtures/0", "invalid_group") in _errors(hass, bad)
+    twice = {**CHASE, "fixtures": ["group:light.a", "group:light.a"]}
+    assert ("effects/0/fixtures/1", "duplicate_fixture") in _errors(hass, twice)
+
+
+async def test_groups_expand_to_their_fixtures(hass, running):
+    _, engine, _ = await running(CHASE)
+    hass.states.async_set("light.front", "on", {
+        "entity_id": ["light.chase_3", "light.not_dmx", "light.chase_1", "light.smoke"]})
+    hass.states.async_set("group.everything", "on", {"entity_id": ["light.front", "light.chase_4"]})
+    # Group members in the group's order; non-DMX lights and fixed fixtures skipped;
+    # fixtures already listed aren't repeated; nested groups expand.
+    assert engine.expand_targets(["group:light.front", "chase_2"]) == ["chase_3", "chase_1", "chase_2"]
+    assert engine.expand_targets(["chase_1", "group:group.everything"]) == ["chase_1", "chase_3", "chase_4"]
+    assert engine.expand_targets(["group:light.missing"]) == []
+
+
+async def test_effect_follows_its_group(hass, running):
+    grouped = {**CHASE, "fixtures": ["group:light.front"]}
+    _, engine, values = await running(grouped)
+
+    # The group helper isn't there yet (e.g. still loading at startup).
+    await _turn(hass, "turn_on", "light.fx_chase")
+    assert engine.owner == {}
+
+    hass.states.async_set("light.front", "on", {"entity_id": ["light.chase_1", "light.chase_2"]})
+    t0 = engine.running["fx_chase"].last_tick
+    engine.tick(t0 + 0.1)
+    assert engine.owner == {"chase_1": "fx_chase", "chase_2": "fx_chase"}
+
+    # A light added to the group joins in; one taken over manually stays released.
+    await _turn(hass, "turn_on", "light.chase_1", brightness=10, transition=0)
+    hass.states.async_set("light.front", "on",
+                          {"entity_id": ["light.chase_1", "light.chase_2", "light.chase_3"]})
+    engine.tick(t0 + 0.2)
+    assert engine.owner == {"chase_2": "fx_chase", "chase_3": "fx_chase"}
+
+    # A light removed from the group goes back to its own state.
+    hass.states.async_set("light.front", "on", {"entity_id": ["light.chase_3"]})
+    engine.tick(t0 + 0.3)
+    assert engine.owner == {"chase_3": "fx_chase"}
+    assert values("chase_2") == [0]

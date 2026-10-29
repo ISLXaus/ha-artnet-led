@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
 from homeassistant.core import HomeAssistant, callback
@@ -69,6 +69,9 @@ class _NodeJob:
     def cancel(self) -> None:  # pyartnet API compatibility
         self.is_done = True
 
+# Effect targets that are Home Assistant groups: "group:light.stage_wash".
+GROUP_PREFIX = "group:"
+
 INTENSITY = "intensity"
 COLOR = "color"
 LAYERS = (INTENSITY, COLOR)
@@ -89,6 +92,11 @@ class RunningEffect:
     stopping: bool = False
     stop_start: float = 0.0
     fade_out: float = 0.0
+    fade_in: float = 0.0
+    # Fixtures this effect has taken (or been refused by manual control / another
+    # effect); ones appearing later - e.g. a group helper loading after the effect
+    # was restored, or a light added to the group - are taken when they show up.
+    claimed: set = field(default_factory=set)
 
     def stop_weight(self, now: float) -> float:
         """1 while running, falling to 0 over the fade-out."""
@@ -186,9 +194,42 @@ class EffectEngine:
         return [name for name, layers in self.layers.items()
                 if any(layer.key == key for layer in layers.values())]
 
+    def expand_targets(self, entries: list) -> list[str]:
+        """Fixture names for a preset's targets, groups expanded, in order, no repeats.
+
+        Entries are fixture names or "group:<entity_id>" for a Home Assistant group
+        (a light group helper or an old-style group). Groups expand to their members
+        that are fixtures of this integration, recursively, in the group's order.
+        """
+        by_entity = {f.entity_id: name for name, f in self.fixtures.items() if f.entity_id}
+        names: list[str] = []
+
+        def add(name: str) -> None:
+            fixture = self.fixtures.get(name)
+            if fixture is not None and fixture._type != "fixed" and name not in names:
+                names.append(name)
+
+        def add_entity(entity_id: str, depth: int) -> None:
+            if entity_id in by_entity:
+                add(by_entity[entity_id])
+                return
+            state = self._hass.states.get(entity_id)
+            members = state.attributes.get("entity_id") if state is not None else None
+            if depth < 5 and isinstance(members, (list, tuple)):
+                for member in members:
+                    if isinstance(member, str):
+                        add_entity(member, depth + 1)
+
+        for entry in entries or []:
+            if isinstance(entry, str) and entry.startswith(GROUP_PREFIX):
+                add_entity(entry[len(GROUP_PREFIX):], 0)
+            elif isinstance(entry, str):
+                add(entry)
+        return names
+
     def _targets(self, preset: dict) -> list[str]:
         """The preset's fixtures that exist and can be driven, in flow order."""
-        names = [n for n in preset.get("fixtures") or [] if n in self.fixtures]
+        names = self.expand_targets(preset.get("fixtures") or [])
         return order_fixtures(names, preset.get("params") or {})
 
     # ---- control ------------------------------------------------------------
@@ -230,12 +271,14 @@ class EffectEngine:
         fade = float(param(params, "fade_in")) if fade_in is None else fade_in
 
         existing = self.running.get(key)
+        targets = self._targets(preset)
         self.running[key] = RunningEffect(
             key=key, preset=preset, level=level,
             phase=existing.phase if existing else 0.0, last_tick=now,
+            fade_in=fade, claimed=set(targets),
         )
         layer_name = effect_layer(preset)
-        for name in self._targets(preset):
+        for name in targets:
             self._take(name, layer_name, key, now, fade)
         self._notify(key)
         self.tick(now)
@@ -277,6 +320,7 @@ class EffectEngine:
                     self._drop(name, lname)
         for name in self._targets(preset):
             self._take(name, layer_name, key, now, 0.3)
+            effect.claimed.add(name)
         self._notify(key)
         self.tick(now)
         self._ensure_loop()
@@ -343,6 +387,15 @@ class EffectEngine:
             order = self._targets(effect.preset)
             frame = compute_frame(effect.preset["type"], params, len(order), effect.phase)
             frames[key] = dict(zip(order, frame))
+            if not effect.stopping:
+                new = [n for n in order if n not in effect.claimed]
+                if new:
+                    layer_name = effect_layer(effect.preset)
+                    for name in new:
+                        effect.claimed.add(name)
+                        self._take(name, layer_name, key, now, max(effect.fade_in, 0.3))
+                    self._notify(key)
+                    self._ensure_loop()
 
         # 2. Combine the layers of every driven fixture and write it.
         for name in list(self.layers):

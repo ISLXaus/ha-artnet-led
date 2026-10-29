@@ -29,7 +29,23 @@ export interface FixtureInfo {
   host: string;
   universe: string;
   channel: number;
+  /** The fixture's light entity, to find it inside Home Assistant groups. */
+  entityId?: string;
 }
+
+/** Effect targets that are Home Assistant groups (mirrors GROUP_PREFIX in effect_engine.py). */
+export const GROUP_PREFIX = 'group:';
+
+interface GroupInfo {
+  entityId: string;
+  name: string;
+  /** DMX fixtures in the group (recursively), in group order. */
+  fixtures: string[];
+  /** All lights in the group, DMX or not. */
+  total: number;
+}
+
+type HassStates = Record<string, { state: string; attributes: Record<string, unknown> }>;
 
 const toHex = (c: number[]) => '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('');
 const fromHex = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
@@ -189,6 +205,72 @@ export class DmxEffectsView extends LitElement {
     return this.fixtures.filter((f) => f.type !== 'fixed');
   }
 
+  private _states(): HassStates {
+    return ((this.hass as unknown as { states?: HassStates }).states ?? {}) as HassStates;
+  }
+
+  /** Members of a group entity, expanded recursively to entity ids. */
+  private _groupMembers(entityId: string, depth = 0): string[] {
+    const members = this._states()[entityId]?.attributes?.entity_id;
+    if (!Array.isArray(members) || depth > 4) return [entityId];
+    return (members as string[]).flatMap((m) => this._groupMembers(m, depth + 1));
+  }
+
+  /**
+   * Fixture names for effect targets: names as they are, groups expanded to their
+   * DMX fixtures. Mirrors EffectEngine.expand_targets().
+   */
+  private _expand(entries: string[]): string[] {
+    const byEntity = new Map(this._usable().map((f) => [f.entityId, f.name]));
+    const usable = new Set(this._usable().map((f) => f.name));
+    const out: string[] = [];
+    for (const entry of entries) {
+      const names = entry.startsWith(GROUP_PREFIX)
+        ? this._groupMembers(entry.slice(GROUP_PREFIX.length))
+            .map((e) => byEntity.get(e))
+            .filter((n): n is string => !!n)
+        : usable.has(entry) ? [entry] : [];
+      for (const n of names) if (!out.includes(n)) out.push(n);
+    }
+    return out;
+  }
+
+  /** Home Assistant groups (light group helpers, old-style groups) holding DMX fixtures. */
+  private _groups(): GroupInfo[] {
+    const byEntity = new Map(this._usable().map((f) => [f.entityId, f.name]));
+    const groups: GroupInfo[] = [];
+    for (const [entityId, st] of Object.entries(this._states())) {
+      const domain = entityId.split('.')[0];
+      if ((domain !== 'light' && domain !== 'group') || !Array.isArray(st.attributes?.entity_id)) continue;
+      const members = this._groupMembers(entityId);
+      const fixtures = [...new Set(members.map((e) => byEntity.get(e)).filter((n): n is string => !!n))];
+      if (!fixtures.length) continue;
+      groups.push({
+        entityId,
+        name: (st.attributes.friendly_name as string) || entityId,
+        fixtures,
+        total: new Set(members).size,
+      });
+    }
+    return groups.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private _groupLabel(entry: string): string {
+    const id = entry.slice(GROUP_PREFIX.length);
+    return (this._states()[id]?.attributes?.friendly_name as string) || id;
+  }
+
+  /** Replace a group entry with its fixtures, so they can be ordered one by one. */
+  private _expandGroup(entry: string) {
+    const current = this._current();
+    if (!current) return;
+    const index = current.fixtures.indexOf(entry);
+    const members = this._expand([entry]).filter((n) => !current.fixtures.includes(n));
+    const list = [...current.fixtures];
+    list.splice(index, 1, ...members);
+    this._update({ fixtures: list });
+  }
+
   private _toggleFixture(name: string, on: boolean) {
     const current = this._current();
     if (!current) return;
@@ -327,7 +409,7 @@ export class DmxEffectsView extends LitElement {
                   <span class="rail-sub">
                     <span class="badge ${effectLayer(effect.type)}">${
                       effectLayer(effect.type) === 'color' ? 'Colour' : 'Intensity'}</span>
-                    ${info?.label ?? effect.type} · ${effect.fixtures.length} fixture${effect.fixtures.length === 1 ? '' : 's'}
+                    ${info?.label ?? effect.type} · ${this._expand(effect.fixtures).length} fixture${this._expand(effect.fixtures).length === 1 ? '' : 's'}
                     ${st ? nothing : html` · <em>not saved</em>`}
                   </span>
                 </span>
@@ -434,15 +516,15 @@ export class DmxEffectsView extends LitElement {
   private _renderPreview(effect: EffectPreset) {
     // The effect flows through the fixtures in `order` (shuffled / reversed), but the
     // strip shows them as picked, i.e. where they are, so shuffle and reverse are visible.
-    const order = orderFixtures(effect.fixtures, effect.params);
+    const order = orderFixtures(this._expand(effect.fixtures), effect.params);
     const flowFrames = computeFrame(effect.type, effect.params, order.length, this._phase);
     const byFlow = new Map(order.map((n, i) => [n, flowFrames[i]]));
-    const shown = effect.fixtures.filter((n) => byFlow.has(n));
+    const shown = this._expand(effect.fixtures).filter((n) => byFlow.has(n));
     const frames = shown.map((n) => byFlow.get(n)!);
     // Combine with an effect on the other layer, as the engine does on the fixtures.
     const other = this._layerWith(effect);
     if (other) {
-      const otherOrder = orderFixtures(other.fixtures, other.params);
+      const otherOrder = orderFixtures(this._expand(other.fixtures), other.params);
       const otherFrames = computeFrame(other.type, other.params, otherOrder.length, this._phaseOther);
       const byName = new Map(otherOrder.map((n, i) => [n, otherFrames[i]]));
       shown.forEach((name, i) => {
@@ -538,7 +620,14 @@ export class DmxEffectsView extends LitElement {
       const key = `${f.host} · universe ${f.universe}`;
       groups.set(key, [...(groups.get(key) ?? []), f]);
     }
-    const missing = effect.fixtures.filter((n) => !usable.some((f) => f.name === n));
+    const haGroups = this._groups().filter(
+      (g) => !q || `${g.name} ${g.entityId}`.toLowerCase().includes(q));
+    const states = this._states();
+    const missing = effect.fixtures.filter((n) =>
+      n.startsWith(GROUP_PREFIX)
+        ? !states[n.slice(GROUP_PREFIX.length)]
+        : !usable.some((f) => f.name === n));
+    const total = this._expand(effect.fixtures).length;
     return html`
       <section>
         <h3>Fixtures</h3>
@@ -552,6 +641,21 @@ export class DmxEffectsView extends LitElement {
               @input=${(e: Event) => (this._filter = (e.target as HTMLInputElement).value)}
             />
             <div class="pick-list">
+              ${haGroups.length
+                ? html`<div class="pick-group">
+                    <div class="pick-head plain">Home Assistant groups</div>
+                    ${haGroups.map((g) => {
+                      const entry = `${GROUP_PREFIX}${g.entityId}`;
+                      return html`<label class="pick-item" title=${g.fixtures.join(', ')}>
+                        <input type="checkbox" .checked=${effect.fixtures.includes(entry)}
+                          @change=${(e: Event) => this._toggleFixture(entry, (e.target as HTMLInputElement).checked)} />
+                        <span class="pick-name"><span class="group-icon" aria-hidden="true">⧉</span>${g.name}</span>
+                        <span class="pick-sub">${g.fixtures.length} fixture${g.fixtures.length === 1 ? '' : 's'}${
+                          g.total > g.fixtures.length ? ` of ${g.total} lights` : ''}</span>
+                      </label>`;
+                    })}
+                  </div>`
+                : nothing}
               ${usable.length
                 ? [...groups.entries()].map(([group, list]) => {
                     const names = list.map((f) => f.name);
@@ -578,7 +682,7 @@ export class DmxEffectsView extends LitElement {
           </div>
           <div class="order">
             <div class="order-head">
-              <span>Order (${effect.fixtures.length})</span>
+              <span>Order <span class="order-count">(${total} fixture${total === 1 ? '' : 's'})</span></span>
               <span class="spacer"></span>
               <button class="small" ?disabled=${effect.fixtures.length < 2} @click=${this._sortByAddress}>By address</button>
               <button class="small" ?disabled=${effect.fixtures.length < 2}
@@ -606,7 +710,16 @@ export class DmxEffectsView extends LitElement {
                     >
                       <span class="grip" aria-hidden="true">⋮⋮</span>
                       <span class="order-nr">${i + 1}</span>
-                      <span class="order-name">${name}${missing.includes(name) ? ' (not in patch)' : ''}</span>
+                      ${name.startsWith(GROUP_PREFIX)
+                        ? html`<span class="order-name group" title=${this._expand([name]).join(', ')}>
+                            <span class="group-icon" aria-hidden="true">⧉</span>${this._groupLabel(name)}
+                            <small>${missing.includes(name)
+                              ? 'group not found'
+                              : `${this._expand([name]).length} fixtures`}</small>
+                          </span>
+                          <button class="small" title="Replace the group with its fixtures, to order them one by one"
+                            ?disabled=${missing.includes(name)} @click=${() => this._expandGroup(name)}>Expand</button>`
+                        : html`<span class="order-name">${name}${missing.includes(name) ? ' (not in patch)' : ''}</span>`}
                       <button class="icon" title="Move up" ?disabled=${i === 0} @click=${() => this._move(i, i - 1)}>↑</button>
                       <button class="icon" title="Move down" ?disabled=${i === effect.fixtures.length - 1}
                         @click=${() => this._move(i, i + 1)}>↓</button>
@@ -614,7 +727,7 @@ export class DmxEffectsView extends LitElement {
                     </li>`
                   )}
                 </ol>`
-              : html`<div class="hint">Tick fixtures on the left. The effect flows through them in this order — drag to rearrange.</div>`}
+              : html`<div class="hint">Tick fixtures or groups on the left. The effect flows through them in this order — drag to rearrange. A group follows its members when the effect starts and as the group changes.</div>`}
           </div>
         </div>
       </section>
@@ -1170,6 +1283,21 @@ export class DmxEffectsView extends LitElement {
       font-weight: 600;
       color: var(--secondary-text-color);
       padding: 4px 0;
+    }
+    .pick-head.plain {
+      padding-left: 2px;
+    }
+    .group-icon {
+      margin-right: 6px;
+      color: var(--primary-color);
+    }
+    .order-name.group small {
+      margin-left: 6px;
+      color: var(--secondary-text-color);
+    }
+    .order-count {
+      font-weight: 400;
+      color: var(--secondary-text-color);
     }
     .pick-item {
       display: flex;

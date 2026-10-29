@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -413,6 +414,18 @@ def effect_errors(effects, fixture_types: dict[str, str],
             seen_targets: set[str] = set()
             for j, target in enumerate(fixtures):
                 tpath = f"{path}/fixtures/{j}"
+                if isinstance(target, str) and target.startswith("group:"):
+                    # A Home Assistant group; its members are resolved when the
+                    # effect runs, so it may not exist yet (or be empty) here.
+                    if not re.fullmatch(r"group:(light|group)\.[a-z0-9_]+", target):
+                        errors.append((tpath, "invalid_group",
+                                       f"'{target}' is not a light group "
+                                       "(expected group:light.<name> or group:group.<name>)"))
+                    elif target in seen_targets:
+                        errors.append((tpath, "duplicate_fixture",
+                                       f"'{target}' is listed twice"))
+                    seen_targets.add(target)
+                    continue
                 if not isinstance(target, str) or target not in fixture_types:
                     errors.append((tpath, "unknown_fixture",
                                    f"'{target}' is not a fixture in the patch"))

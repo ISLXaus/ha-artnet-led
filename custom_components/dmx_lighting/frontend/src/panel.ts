@@ -10,6 +10,7 @@ import {
   CORRECTIONS,
   EntityMap,
   existingEntityId,
+  slugifyName,
   footprint,
   minUniverse,
   nodeKey,
@@ -81,6 +82,9 @@ export class DmxPatchPanel extends LitElement {
           host: node.host,
           universe,
           channel: d.channel,
+          entityId:
+            existingEntityId(this.hass, this._entityMap, node.host, universe, d) ??
+            `light.${slugifyName(d.name)}`,
         }))
       )
     );
