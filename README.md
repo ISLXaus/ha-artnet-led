@@ -33,6 +33,11 @@ The DMX integration for Home Assistant allows you to send DMX values to an [Art-
 7. _DOWNLOAD THIS REPOSITORY WITH HACS_
 8. _DOWNLOAD_
 9. Restart Home Assistant (_Settings_ > _System_ >  _RESTART_)
+10. Add the integration: _Settings_ > _Devices & Services_ > _+ ADD INTEGRATION_ > _DMX Artnet integration_ — or click:
+
+    [![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=artnet_led)
+
+    This one click creates the *DMX Patch* entry and puts the **DMX Patch** panel in the sidebar. (Home Assistant doesn't load a custom integration until it's added, so the panel can't appear from the download alone. Existing YAML setups get the panel automatically.)
 
 ## DMX Patch panel (UI configuration)
 
@@ -43,7 +48,7 @@ Since v0.2.0 the integration ships a **DMX Patch** panel in the Home Assistant s
 * **Live apply**: *Save & Apply* takes effect immediately — no Home Assistant restart. Entities keep their identity across saves (unique IDs are derived from `host/universe/channel`, so moving a fixture to another channel creates a new entity).
 * **Live DMX values**: toggle *Live DMX values* on any universe to watch the actual channel values update in real time (10 Hz).
 
-The first *Save & Apply* automatically creates the *DMX Patch* config entry (also available via *Settings → Devices & Services → Add integration → DMX Artnet integration*). The patch itself is stored in `.storage/artnet_led.patch`.
+The panel appears once the *DMX Patch* config entry exists — created by adding the integration (installation step 10), or automatically by the first *Save & Apply* for YAML users. The patch itself is stored in `.storage/artnet_led.patch`.
 
 ### Backup / edit as YAML
 
