@@ -71,6 +71,8 @@ class EffectEngine:
         self.autorun = True                      # tests drive tick() by hand
         self._task: asyncio.Task | None = None
         self._listeners: dict[str, list[Callable[[], None]]] = {}
+        # Temporary presets (panel previews) dropped once they have faded out.
+        self._remove_when_done: set[str] = set()
 
     # ---- setup --------------------------------------------------------------
 
@@ -149,6 +151,51 @@ class EffectEngine:
         self.tick(now)
 
     @callback
+    def update_preset(self, key: str, preset: dict, now: float | None = None) -> None:
+        """Swap a running effect's preset (panel live preview) without restarting it.
+
+        Fixtures no longer in the preset go back to their normal state; new ones are
+        taken over with a short fade.
+        """
+        self.presets[key] = preset
+        effect = self.running.get(key)
+        if effect is None or effect.stopping:
+            return
+        now = time.monotonic() if now is None else now
+        effect.preset = preset
+        wanted = set(self._targets(preset))
+        for name in self.owned_fixtures(key):
+            if name not in wanted:
+                del self.owner[name]
+                fixture = self.fixtures[name]
+                fixture.write_effect_values(fixture.normal_values())
+                fixture.async_write_ha_state_if_added()
+        new = [n for n in self._targets(preset) if self.owner.get(n) != key]
+        if new:
+            effect.fade_start, effect.fade_in = now, 0.3
+            for name in new:
+                fixture = self.fixtures[name]
+                effect.start_values[name] = list(fixture.channel.get_values())
+                previous = self.owner.get(name)
+                self.owner[name] = key
+                fixture.cancel_fade()
+                if previous:
+                    self._notify(previous)
+                fixture.async_write_ha_state_if_added()
+        self._notify(key)
+        self.tick(now)
+
+    @callback
+    def stop_and_remove(self, key: str, fade_out: float | None = None) -> None:
+        """Stop a temporary preset and forget it once it has faded out."""
+        self._remove_when_done.add(key)
+        if key in self.running:
+            self.stop(key, fade_out=fade_out)
+        else:
+            self._remove_when_done.discard(key)
+            self.presets.pop(key, None)
+
+    @callback
     def set_level(self, key: str, level: float) -> None:
         effect = self.running.get(key)
         if effect is not None:
@@ -213,6 +260,9 @@ class EffectEngine:
 
     def _finish(self, key: str) -> None:
         self.running.pop(key, None)
+        if key in self._remove_when_done:
+            self._remove_when_done.discard(key)
+            self.presets.pop(key, None)
         for name in self.owned_fixtures(key):
             del self.owner[name]
             fixture = self.fixtures.get(name)

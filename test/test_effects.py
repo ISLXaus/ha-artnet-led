@@ -371,3 +371,54 @@ async def test_real_loop_runs_and_stops(hass, running):
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert engine._task is None and not engine.running
+
+
+# ---- live preview (panel Effects tab) --------------------------------------------------
+
+
+async def test_preview_runs_updates_and_stops(hass, running, hass_ws_client):
+    _, engine, values = await running()
+    client = await hass_ws_client(hass)
+    preset = {"name": "", "type": "sine", "fixtures": ["chase_1", "chase_2"],
+              "params": {"speed": 60, "spread": 0}}
+    await client.send_json({"id": 1, "type": "dmx_lighting/effect/preview",
+                            "preview_id": "p1", "preset": preset})
+    response = await client.receive_json()
+    assert response["success"], response
+    assert engine.owner == {"chase_1": "preview:p1", "chase_2": "preview:p1"}
+
+    # Edit while running: swap fixtures and parameters without restarting.
+    preset2 = {**preset, "fixtures": ["chase_2", "chase_3"], "params": {"speed": 120, "spread": 0}}
+    await client.send_json({"id": 2, "type": "dmx_lighting/effect/preview/update",
+                            "preview_id": "p1", "preset": preset2})
+    assert (await client.receive_json())["success"]
+    assert engine.owner == {"chase_2": "preview:p1", "chase_3": "preview:p1"}
+    assert engine.presets["preview:p1"]["params"]["speed"] == 120
+    assert values("chase_1") == [0]  # released back to its own (off) state
+
+    # An invalid edit is refused and the last good version keeps running.
+    await client.send_json({"id": 3, "type": "dmx_lighting/effect/preview/update",
+                            "preview_id": "p1", "preset": {**preset, "type": "nope"}})
+    response = await client.receive_json()
+    assert not response["success"] and response["error"]["code"] == "invalid_effect"
+    assert engine.presets["preview:p1"]["type"] == "sine"
+
+    # Unsubscribing fades it out and forgets the temporary preset.
+    await client.send_json({"id": 4, "type": "unsubscribe_events", "subscription": 1})
+    assert (await client.receive_json())["success"]
+    effect = engine.running["preview:p1"]
+    assert effect.stopping
+    engine.tick(effect.stop_start + 1)
+    assert "preview:p1" not in engine.running and "preview:p1" not in engine.presets
+    assert engine.owner == {}
+
+
+async def test_preview_rejects_bad_presets(hass, running, hass_ws_client):
+    await running()
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": "dmx_lighting/effect/preview", "preview_id": "x",
+                            "preset": {"type": "chase", "fixtures": ["smoke"]}})
+    response = await client.receive_json()
+    assert not response["success"]
+    assert "fixed fixture" in response["error"]["message"]
+

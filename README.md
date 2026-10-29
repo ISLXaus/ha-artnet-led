@@ -89,12 +89,29 @@ The **YAML** button in the panel header opens the whole patch as YAML text: copy
 
 ## Effects
 
-The integration has an effects engine in the style of a lighting console's FX: an effect runs a pattern across a list of fixtures, flowing from one to the next. The Effects tab in the panel is coming next; for now, add presets under `effects:` in the patch YAML (**YAML** button → edit → *Load into editor* → *Save & Apply*).
+The integration has an effects engine in the style of a lighting console's FX: an effect runs a pattern across a list of fixtures, flowing from one to the next.
+
+### The Effects tab
+
+Switch the DMX Patch panel from **Patch** to **Effects** (top left):
+
+1. **+ New effect**, give it a name.
+2. **Pick an effect** from the cards (each shows its waveform or colours).
+3. **Tick fixtures** on the left; they appear in the **Order** list on the right, which is the order the effect flows through them. Drag rows (or use ↑/↓) to rearrange, or use *By address* / *Reverse*.
+4. **Adjust** speed, fades, size, spread, direction, shuffle, groups/blocks/wings and colours with sliders and buttons. The **Preview** strip animates the effect on screen as you change things.
+5. Turn on **Live on fixtures** to run the effect on the real lights while you edit (it stops when you switch it off, change effect or leave the page).
+6. **Save & Apply**. Saved effects get a ▶ / ■ button in the list to run or stop them.
+
+Renaming a fixture in the Patch tab updates the effects that use it; deleting one removes it from them.
+
+### In Home Assistant
 
 Each preset becomes a device with:
 
 * **`light.fx_<name>`** — turn it on to start the effect (fading in), off to stop it (fading out). Its brightness is the effect's master level. A `transition` in the service call overrides the preset's fade time. It shows which fixtures it is currently driving, and comes back on after a restart if it was on.
 * **Number entities** for speed, size, spread, fade in and fade out. Changes apply on the next frame and are saved into the preset.
+
+Presets are stored with the patch, so they are also part of the YAML export/import:
 
 ```yaml
 effects:

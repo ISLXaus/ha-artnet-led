@@ -19,6 +19,10 @@ import { exportPatchYaml, getEntityMap, getPatch, importPatchYaml, savePatch } f
 import { newDevice, newNode } from './dialogs';
 import './universe-grid';
 import './fixture-list';
+import './effects-view';
+import type { FixtureInfo } from './effects-view';
+import type { EffectPreset } from './effects-model';
+import type { PropertyValues } from 'lit';
 import './dialogs';
 
 type DialogState =
@@ -45,6 +49,72 @@ export class DmxPatchPanel extends LitElement {
   @state() private _dialog: DialogState = { kind: 'none' };
   /** unique_id → entity_id of existing lights, refreshed when it might have changed. */
   @state() private _entityMap: EntityMap = {};
+  /** Top-level tab: the patch (nodes, universes, fixtures) or the effects editor. */
+  @state() private _mode: 'patch' | 'effects' = DmxPatchPanel._loadMode();
+  /** Effect names as last loaded/saved: those have light entities to run. */
+  @state() private _savedEffectNames: string[] = [];
+
+  private static _loadMode(): 'patch' | 'effects' {
+    try {
+      return localStorage.getItem('dmx_lighting.mode') === 'effects' ? 'effects' : 'patch';
+    } catch {
+      return 'patch';
+    }
+  }
+
+  private _setMode(mode: 'patch' | 'effects') {
+    this._mode = mode;
+    try {
+      localStorage.setItem('dmx_lighting.mode', mode);
+    } catch {
+      // Not remembered; fine.
+    }
+  }
+
+  /** Every fixture in the patch, for the effects editor. */
+  private _fixtureInfos(): FixtureInfo[] {
+    return this._patch.nodes.flatMap((node) =>
+      Object.entries(node.universes ?? {}).flatMap(([universe, u]) =>
+        (u.devices ?? []).map((d) => ({
+          name: d.name,
+          type: d.type,
+          host: node.host,
+          universe,
+          channel: d.channel,
+        }))
+      )
+    );
+  }
+
+  private _fixtureNames(patch = this._patch): Set<string> {
+    return new Set(
+      patch.nodes.flatMap((n) =>
+        Object.values(n.universes ?? {}).flatMap((u) => (u.devices ?? []).map((d) => d.name))
+      )
+    );
+  }
+
+  /** Fixtures deleted from the patch (device, universe or node) leave the effects too. */
+  willUpdate(changed: PropertyValues<this>) {
+    const before = changed.get('_patch' as keyof DmxPatchPanel) as PatchDoc | undefined;
+    if (!before || !this._patch.effects?.length) return;
+    const now = this._fixtureNames();
+    const gone = [...this._fixtureNames(before)].filter((n) => !now.has(n));
+    if (!gone.length) return;
+    this._patch = {
+      ...this._patch,
+      effects: this._patch.effects.map((e) => ({
+        ...e,
+        fixtures: e.fixtures.filter((n) => !gone.includes(n)),
+      })),
+    };
+  }
+
+  private _onEffectsChanged(e: CustomEvent) {
+    this._patch = { ...this._patch, effects: e.detail.effects as EffectPreset[] };
+    this._dirty = true;
+  }
+
   /** Fixture view: the 512-channel grid, or a table of all fixtures on the node. */
   @state() private _view: 'grid' | 'list' = DmxPatchPanel._loadView();
 
@@ -86,6 +156,7 @@ export class DmxPatchPanel extends LitElement {
     try {
       const result = await getPatch(this.hass);
       this._patch = result.patch ?? { nodes: [] };
+      this._savedEffectNames = (this._patch.effects ?? []).map((e) => e.name);
       // Surface problems in the stored patch right away (e.g. a universe number
       // that a newer version no longer accepts).
       this._errors = result.errors ?? [];
@@ -167,6 +238,7 @@ export class DmxPatchPanel extends LitElement {
     try {
       const result = await savePatch(this.hass, this._patch);
       if (result.success) {
+        this._savedEffectNames = (this._patch.effects ?? []).map((e) => e.name);
         this._dirty = false;
         this._showToast('Patch saved — changes applied live');
       } else {
@@ -354,6 +426,17 @@ export class DmxPatchPanel extends LitElement {
     if (this._dialog.kind !== 'device') return;
     const universeNr = this._dialog.universeNr;
 
+    // A renamed fixture keeps its place in every effect.
+    if (original.name && device.name !== original.name && this._patch.effects?.length) {
+      this._patch = {
+        ...this._patch,
+        effects: this._patch.effects.map((fx) => ({
+          ...fx,
+          fixtures: fx.fixtures.map((n) => (n === original.name ? device.name : n)),
+        })),
+      };
+    }
+
     let truncated = 0;
     this._updateUniverse(universeNr, (universe) => {
       const devices = [...universe.devices];
@@ -418,6 +501,12 @@ export class DmxPatchPanel extends LitElement {
     return html`
       <div class="header">
         <h1>DMX Patch</h1>
+        <span class="mode-toggle" role="tablist" aria-label="Section">
+          <button role="tab" aria-selected=${this._mode === 'patch'}
+            class=${this._mode === 'patch' ? 'active' : ''} @click=${() => this._setMode('patch')}>Patch</button>
+          <button role="tab" aria-selected=${this._mode === 'effects'}
+            class=${this._mode === 'effects' ? 'active' : ''} @click=${() => this._setMode('effects')}>Effects</button>
+        </span>
         ${this._dirty ? html`<span class="dirty">unsaved changes</span>` : nothing}
         <span class="spacer"></span>
         <button class="header-secondary" @click=${this._openYamlDialog}>YAML</button>
@@ -430,6 +519,18 @@ export class DmxPatchPanel extends LitElement {
         </button>
       </div>
 
+      ${this._mode === 'effects'
+        ? html`<div class="layout effects-layout">
+            <dmx-effects-view
+              .hass=${this.hass}
+              .effects=${this._patch.effects ?? []}
+              .fixtures=${this._fixtureInfos()}
+              .errors=${this._errors}
+              .savedNames=${this._savedEffectNames}
+              @effects-changed=${this._onEffectsChanged}
+            ></dmx-effects-view>
+          </div>`
+        : html`
       <div class="layout ${this.narrow ? 'narrow' : ''}">
         <nav class="rail">
           <div class="rail-section">Patch nodes</div>
@@ -575,7 +676,7 @@ export class DmxPatchPanel extends LitElement {
               `
             : nothing}
         </main>
-      </div>
+      </div>`}
 
       ${this._dialog.kind === 'device'
         ? html`
@@ -638,8 +739,12 @@ export class DmxPatchPanel extends LitElement {
 
   static styles = css`
     :host {
-      display: block;
-      height: 100%;
+      /* Newer HA versions don't give custom panels a fixed height; use the viewport so
+         the rail and editor scroll on their own instead of the whole page. */
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
       background: var(--primary-background-color);
       color: var(--primary-text-color);
       font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif);
@@ -650,14 +755,17 @@ export class DmxPatchPanel extends LitElement {
       color: var(--secondary-text-color);
     }
     .header {
+      flex: none;
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 12px;
+      gap: 6px 12px;
       padding: 8px 16px;
       background: var(--app-header-background-color, var(--primary-color));
       color: var(--app-header-text-color, #fff);
     }
     .header h1 {
+      white-space: nowrap;
       font-size: 1.25rem;
       font-weight: 400;
       margin: 0;
@@ -694,7 +802,30 @@ export class DmxPatchPanel extends LitElement {
     }
     .layout {
       display: flex;
-      height: calc(100% - 56px);
+      flex: 1;
+      min-height: 0;
+    }
+    .effects-layout {
+      display: block;
+      overflow-y: auto;
+    }
+    .mode-toggle {
+      flex: none;
+      display: inline-flex;
+      margin-left: 12px;
+      border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .mode-toggle button {
+      border-radius: 0;
+      padding: 4px 14px;
+      background: none;
+      color: inherit;
+    }
+    .mode-toggle button.active {
+      background: color-mix(in srgb, currentColor 16%, transparent);
+      font-weight: 600;
     }
     .layout.narrow {
       flex-direction: column;

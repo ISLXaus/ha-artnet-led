@@ -28,6 +28,8 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_status_get)
     websocket_api.async_register_command(hass, ws_entity_map_get)
     websocket_api.async_register_command(hass, ws_dmx_subscribe)
+    websocket_api.async_register_command(hass, ws_effect_preview)
+    websocket_api.async_register_command(hass, ws_effect_preview_update)
 
 
 def _store(hass: HomeAssistant):
@@ -246,3 +248,89 @@ async def ws_dmx_subscribe(hass: HomeAssistant, connection, msg) -> None:
     unsub = monitor.subscribe(msg["node_key"], msg["universe"], forward)
     connection.subscriptions[msg_id] = unsub
     connection.send_result(msg_id)
+
+
+# ---- effect live preview -------------------------------------------------------
+#
+# The Effects tab runs the effect being edited on the real fixtures before it is
+# saved. A preview is a subscription: it stops (fading out) when the panel
+# unsubscribes or the connection drops, and "update" swaps in edited parameters.
+
+DATA_PREVIEWS = "effect_previews"  # (connection id, preview id) -> engine key
+
+
+def _engine(hass: HomeAssistant):
+    from custom_components.dmx_lighting.const import DATA_ENGINES
+
+    engines = hass.data[DOMAIN].get(DATA_ENGINES) or {}
+    return next(iter(engines.values()), None)
+
+
+def _preview_errors(engine, preset: dict) -> list[str]:
+    from custom_components.dmx_lighting.validation import effect_errors
+
+    fixture_types = {name: f._type for name, f in engine.fixtures.items()}
+    checked = {**preset, "name": preset.get("name") or "Preview"}
+    return [message for _, _, message in effect_errors([checked], fixture_types, {})]
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "dmx_lighting/effect/preview",
+        vol.Required("preview_id"): str,
+        vol.Required("preset"): dict,
+        vol.Optional("level", default=1.0): vol.All(vol.Coerce(float), vol.Range(0, 1)),
+    }
+)
+@callback
+def ws_effect_preview(hass: HomeAssistant, connection, msg) -> None:
+    engine = _engine(hass)
+    if engine is None:
+        connection.send_error(msg["id"], "not_available",
+                              "Save & Apply the patch first so the fixtures exist")
+        return
+    if errors := _preview_errors(engine, msg["preset"]):
+        connection.send_error(msg["id"], "invalid_effect", "; ".join(errors))
+        return
+
+    key = f"preview:{msg['preview_id']}"
+    engine.presets[key] = msg["preset"]
+    engine.start(key, msg["level"], fade_in=0.3)
+    previews = hass.data[DOMAIN].setdefault(DATA_PREVIEWS, {})
+    previews[(id(connection), msg["preview_id"])] = key
+
+    @callback
+    def stop() -> None:
+        previews.pop((id(connection), msg["preview_id"]), None)
+        engine.stop_and_remove(key, fade_out=0.5)
+
+    connection.subscriptions[msg["id"]] = stop
+    connection.send_result(msg["id"])
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "dmx_lighting/effect/preview/update",
+        vol.Required("preview_id"): str,
+        vol.Required("preset"): dict,
+        vol.Optional("level"): vol.All(vol.Coerce(float), vol.Range(0, 1)),
+    }
+)
+@callback
+def ws_effect_preview_update(hass: HomeAssistant, connection, msg) -> None:
+    engine = _engine(hass)
+    key = (hass.data[DOMAIN].get(DATA_PREVIEWS) or {}).get(
+        (id(connection), msg["preview_id"]))
+    if engine is None or key is None:
+        connection.send_error(msg["id"], "not_found", "No preview running")
+        return
+    if errors := _preview_errors(engine, msg["preset"]):
+        # Keep showing the last valid version; the panel shows the problem.
+        connection.send_error(msg["id"], "invalid_effect", "; ".join(errors))
+        return
+    engine.update_preset(key, msg["preset"])
+    if "level" in msg:
+        engine.set_level(key, msg["level"])
+    connection.send_result(msg["id"])

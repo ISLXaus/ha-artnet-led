@@ -51,6 +51,8 @@ export interface PatchNode {
 
 export interface PatchDoc {
   nodes: PatchNode[];
+  /** Effect presets (see effects-model.ts). */
+  effects?: import('./effects-model').EffectPreset[];
 }
 
 export interface PatchError {

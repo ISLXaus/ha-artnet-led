@@ -62,3 +62,38 @@ export const subscribeDmx = (
     node_key: nodeKey,
     universe,
   });
+
+/** Run an (unsaved) effect preset on the real fixtures; resolves to an unsubscribe that stops it. */
+export const startEffectPreview = (
+  hass: HomeAssistant,
+  previewId: string,
+  preset: unknown,
+  level = 1
+) =>
+  hass.connection.subscribeMessage<unknown>(() => undefined, {
+    type: 'dmx_lighting/effect/preview',
+    preview_id: previewId,
+    preset,
+    level,
+  });
+
+export const updateEffectPreview = (
+  hass: HomeAssistant,
+  previewId: string,
+  preset: unknown,
+  level?: number
+) =>
+  hass.callWS<null>({
+    type: 'dmx_lighting/effect/preview/update',
+    preview_id: previewId,
+    preset,
+    ...(level === undefined ? {} : { level }),
+  });
+
+export const callService = (
+  hass: HomeAssistant,
+  domain: string,
+  service: string,
+  serviceData: Record<string, unknown>
+) =>
+  hass.callWS<unknown>({ type: 'call_service', domain, service, service_data: serviceData });
