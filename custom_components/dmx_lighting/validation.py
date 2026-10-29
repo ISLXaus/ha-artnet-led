@@ -456,6 +456,8 @@ def effect_errors(effects, fixture_types: dict[str, str],
                 ):
                     errors.append((ppath, "invalid_param",
                                    "colors must be a list of [red, green, blue] values 0-255"))
+                elif effect.get("type") in ("color_chase", "color_wave") and len(value) < 2:
+                    errors.append((ppath, "too_few_colors", "Pick at least 2 colours"))
             else:
                 errors.append((ppath, "unknown_param", f"Unknown effect parameter '{key}'"))
 

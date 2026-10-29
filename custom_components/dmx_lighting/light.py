@@ -149,7 +149,7 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         """Key of the effect currently driving this fixture, if any."""
         if self.effect_engine is None:
             return None
-        return self.effect_engine.owner.get(self.name)
+        return ", ".join(self.effect_engine.fixture_effects(self.name)) or None
 
     def cancel_fade(self) -> None:
         fade = getattr(self._channel, "_current_fade", None)
@@ -177,6 +177,12 @@ class DmxBaseLight(LightEntity, RestoreEntity):
             return list(self.get_target_values())
         finally:
             self._state, self._attr_brightness, self._vals = saved
+
+    def normal_level(self) -> float:
+        """Intensity 0..1 without an effect: the light entity's brightness, 0 when off."""
+        if not self.is_on:
+            return 0.0
+        return min(1.0, max(0.0, (self._attr_brightness or 0) / 255))
 
     def normal_values(self) -> list[float]:
         """What the fixture outputs without an effect: its light entity's state."""

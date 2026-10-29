@@ -306,7 +306,7 @@ async def test_transition_overrides_preset_fade(hass, running):
     effect = {**CHASE, "params": {"speed": 60, "fade_in": 5}}
     _, engine, _ = await running(effect)
     await _turn(hass, "turn_on", "light.fx_chase", transition=0)
-    assert engine.running["fx_chase"].fade_in == 0
+    assert engine.layers["chase_1"]["intensity"].fade == 0
 
 
 async def test_last_started_effect_wins(hass, running):
@@ -422,3 +422,69 @@ async def test_preview_rejects_bad_presets(hass, running, hass_ws_client):
     assert not response["success"]
     assert "fixed fixture" in response["error"]["message"]
 
+
+
+# ---- layering and colours ------------------------------------------------------------
+
+LEVEL_50 = {"id": "l1", "name": "Half", "type": "sine", "fixtures": ["wash"],
+            "params": {"base": 50, "size": 0, "fade_in": 0, "fade_out": 0}}
+LEVEL_20 = {**LEVEL_50, "id": "l2", "name": "Low", "params": {"base": 20, "size": 0,
+                                                              "fade_in": 2, "fade_out": 0}}
+
+
+def test_colour_fade_runs_through_every_colour():
+    colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255]]
+    assert color_at("color_wave", 0.0, {"colors": colors}) == (255, 0, 0)
+    assert color_at("color_wave", 1 / 3, {"colors": colors}) == (0, 255, 0)
+    assert color_at("color_wave", 2 / 3, {"colors": colors}) == (0, 0, 255)
+    halfway = color_at("color_wave", 1 / 6, {"colors": colors})
+    assert all(abs(a - b) <= 1 for a, b in zip(halfway, (128, 128, 0)))
+    assert color_at("color_chase", 0.5, {"colors": colors}) == (0, 255, 0)
+
+
+async def test_colour_effects_need_two_colours(hass):
+    one = {**RAINBOW, "type": "color_chase", "params": {"colors": [[255, 0, 0]]}}
+    assert ("effects/0/params/colors", "too_few_colors") in _errors(hass, one)
+    two = {**one, "params": {"colors": [[255, 0, 0], [0, 0, 255]]}}
+    assert _errors(hass, two) == []
+
+
+async def test_intensity_and_colour_layer_on_one_fixture(hass, running):
+    _, engine, values = await running(LEVEL_50, RAINBOW)
+    await _turn(hass, "turn_on", "light.fx_rainbow")
+    await _turn(hass, "turn_on", "light.fx_half")
+    assert engine.fixture_effects("wash") == ["fx_half", "fx_rainbow"]
+    assert hass.states.get("light.wash").attributes["dmx_effect"] == "fx_half, fx_rainbow"
+    t0 = engine.running["fx_rainbow"].last_tick
+
+    engine.tick(t0 + 1 / 3)  # rainbow is green; intensity is 50% from the other effect
+    assert values("wash") == [128, 0, 128, 0, 42]
+
+    # Stopping the intensity effect leaves the colour running at the colour master level.
+    await _turn(hass, "turn_off", "light.fx_half")
+    engine.tick(t0 + 1 / 3)
+    assert values("wash") == [255, 0, 255, 0, 42]
+    assert engine.fixture_effects("wash") == ["fx_rainbow"]
+
+    # And the other way round: colour stops, intensity keeps the fixture's own colour.
+    await _turn(hass, "turn_on", "light.fx_half")
+    await _turn(hass, "turn_off", "light.fx_rainbow")
+    engine.tick(t0 + 1 / 3)
+    assert values("wash") == [128, 128, 128, 128, 42]  # its own colour: white
+
+    # Manual control releases both layers.
+    await _turn(hass, "turn_on", "light.fx_rainbow")
+    await _turn(hass, "turn_on", "light.wash", rgb_color=[0, 0, 255], transition=0)
+    assert engine.fixture_effects("wash") == []
+
+
+async def test_takeover_crossfades_from_the_previous_effect(hass, running):
+    _, engine, values = await running(LEVEL_50, LEVEL_20)
+    await _turn(hass, "turn_on", "light.fx_half")
+    await _turn(hass, "turn_on", "light.fx_low")  # 2 s fade from 50% to 20%
+    t0 = engine.layers["wash"]["intensity"].since
+    engine.tick(t0 + 1)
+    assert values("wash")[0] == 89  # 35% = halfway between 50% and 20%
+    engine.tick(t0 + 2.5)
+    assert values("wash")[0] == 51  # 20%
+    assert engine.layers["wash"]["intensity"].prev is None

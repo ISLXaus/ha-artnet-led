@@ -8,7 +8,9 @@ import {
   EffectType,
   Direction,
   DEFAULT_COLORS,
+  PALETTES,
   PARAM_SPEC,
+  effectLayer,
   computeFrame,
   effectEntityId,
   isColorType,
@@ -52,6 +54,9 @@ export class DmxEffectsView extends LitElement {
   @state() private _liveError = '';
   @state() private _phase = 0;
   @state() private _paused = false;
+  /** Another effect (on the other layer) to combine with in the on-screen preview. */
+  @state() private _layerWithId = '';
+  private _phaseOther = 0;
 
   private _raf = 0;
   private _lastFrame = 0;
@@ -91,6 +96,8 @@ export class DmxEffectsView extends LitElement {
     if (effect && !this._paused) {
       const dt = this._lastFrame ? (t - this._lastFrame) / 1000 : 0;
       this._phase += (dt * p(effect.params, 'speed')) / 60;
+      const other = this._layerWith(effect);
+      if (other) this._phaseOther += (dt * p(other.params, 'speed')) / 60;
     }
     this._lastFrame = t;
     this._raf = requestAnimationFrame(this._animate);
@@ -100,6 +107,12 @@ export class DmxEffectsView extends LitElement {
 
   private _current(): EffectPreset | undefined {
     return this.effects.find((e) => e.id === this._selectedId);
+  }
+
+  /** The effect chosen to layer with in the preview, if it is on the other layer. */
+  private _layerWith(effect: EffectPreset): EffectPreset | undefined {
+    const other = this.effects.find((e) => e.id === this._layerWithId);
+    return other && effectLayer(other.type) !== effectLayer(effect.type) ? other : undefined;
   }
 
   private _emit(effects: EffectPreset[]) {
@@ -114,6 +127,17 @@ export class DmxEffectsView extends LitElement {
     const updated = { ...current, ...patch };
     this._emit(this.effects.map((e) => (e.id === current.id ? updated : e)));
     this._schedulePreviewUpdate(updated);
+  }
+
+  private _setType(type: EffectType) {
+    const current = this._current();
+    if (!current) return;
+    // Colour steps / fade need 2+ colours: start from the defaults so they are visible.
+    if ((type === 'color_chase' || type === 'color_wave') && (current.params.colors?.length ?? 0) < 2) {
+      this._update({ type, params: { ...current.params, colors: DEFAULT_COLORS.map((c) => [...c]) } });
+      return;
+    }
+    this._update({ type });
   }
 
   private _setParam<K extends keyof EffectParams>(key: K, value: EffectParams[K]) {
@@ -301,6 +325,8 @@ export class DmxEffectsView extends LitElement {
                 <span class="rail-text">
                   <span class="rail-title">${effect.name || '(unnamed)'}</span>
                   <span class="rail-sub">
+                    <span class="badge ${effectLayer(effect.type)}">${
+                      effectLayer(effect.type) === 'color' ? 'Colour' : 'Intensity'}</span>
                     ${info?.label ?? effect.type} · ${effect.fixtures.length} fixture${effect.fixtures.length === 1 ? '' : 's'}
                     ${st ? nothing : html` · <em>not saved</em>`}
                   </span>
@@ -358,21 +384,33 @@ export class DmxEffectsView extends LitElement {
 
       <section>
         <h3>Effect</h3>
-        <div class="types">
-          ${EFFECT_TYPES.map(
-            (t) => html`
-              <button
-                class="type ${effect.type === t.type ? 'active' : ''}"
-                aria-pressed=${effect.type === t.type}
-                @click=${() => this._update({ type: t.type })}
-              >
-                ${this._typeGlyph(t.type, effect.params)}
-                <span class="type-label">${t.label}</span>
-                <span class="type-desc">${t.description}</span>
-              </button>
-            `
-          )}
+        <div class="layer-note">
+          Intensity effects move brightness and keep each fixture's colour; colour effects set
+          the colour. Run one of each on the same fixtures to <b>layer</b> them — e.g. a chase
+          over a rainbow.
         </div>
+        ${(['intensity', 'color'] as const).map(
+          (kind) => html`
+            <div class="type-group">
+              <div class="type-group-label">${kind === 'color' ? 'Colour' : 'Intensity'}</div>
+              <div class="types">
+                ${EFFECT_TYPES.filter((t) => t.kind === kind).map(
+                  (t) => html`
+                    <button
+                      class="type ${effect.type === t.type ? 'active' : ''}"
+                      aria-pressed=${effect.type === t.type}
+                      @click=${() => this._setType(t.type)}
+                    >
+                      ${this._typeGlyph(t.type, effect.params)}
+                      <span class="type-label">${t.label}</span>
+                      <span class="type-desc">${t.description}</span>
+                    </button>
+                  `
+                )}
+              </div>
+            </div>
+          `
+        )}
       </section>
 
       ${this._renderFixtures(effect)}
@@ -396,6 +434,22 @@ export class DmxEffectsView extends LitElement {
   private _renderPreview(effect: EffectPreset) {
     const order = orderFixtures(effect.fixtures, effect.params);
     const frames = computeFrame(effect.type, effect.params, order.length, this._phase);
+    // Combine with an effect on the other layer, as the engine does on the fixtures.
+    const other = this._layerWith(effect);
+    if (other) {
+      const otherOrder = orderFixtures(other.fixtures, other.params);
+      const otherFrames = computeFrame(other.type, other.params, otherOrder.length, this._phaseOther);
+      const byName = new Map(otherOrder.map((n, i) => [n, otherFrames[i]]));
+      order.forEach((name, i) => {
+        const o = byName.get(name);
+        if (!o) return;
+        frames[i] = effectLayer(effect.type) === 'intensity'
+          ? { level: frames[i].level, rgb: o.rgb }
+          : { level: o.level, rgb: frames[i].rgb };
+      });
+    }
+    const candidates = this.effects.filter(
+      (e) => e.id !== effect.id && effectLayer(e.type) !== effectLayer(effect.type));
     return html`
       <section class="preview">
         <div class="preview-head">
@@ -403,6 +457,18 @@ export class DmxEffectsView extends LitElement {
           <button class="small" @click=${() => (this._paused = !this._paused)}>
             ${this._paused ? '▶ Play' : '❚❚ Pause'}
           </button>
+          ${candidates.length
+            ? html`<label class="layer-with">
+                Layer with
+                <select @change=${(e: Event) => {
+                  this._layerWithId = (e.target as HTMLSelectElement).value;
+                  this._phaseOther = 0;
+                }}>
+                  <option value="" ?selected=${!other}>nothing</option>
+                  ${candidates.map((c) => html`<option value=${c.id} ?selected=${other?.id === c.id}>${c.name}</option>`)}
+                </select>
+              </label>`
+            : nothing}
           <span class="spacer"></span>
           <label class="switch" title="Run this effect on the real fixtures while you edit">
             <input
@@ -595,23 +661,47 @@ export class DmxEffectsView extends LitElement {
     }
     const colors = effect.params.colors?.length ? effect.params.colors : DEFAULT_COLORS;
     const set = (list: number[][]) => this._setParam('colors', list);
+    const same = (a: number[][], b: number[][]) =>
+      a.length === b.length && a.every((c, i) => c.every((v, j) => v === b[i][j]));
     return html`
       <section>
         <h3>Colours</h3>
+        <div class="hint">
+          ${effect.type === 'color_chase'
+            ? 'Each fixture steps through these colours in order. Pick 2 or more.'
+            : 'Each fixture fades smoothly through these colours in order. Pick 2 or more.'}
+        </div>
         <div class="colors">
           ${colors.map(
             (c, i) => html`<div class="color">
+              <span class="color-nr">${i + 1}</span>
               <input type="color" aria-label="Colour ${i + 1}" .value=${toHex(c)}
                 @input=${(e: Event) => set(colors.map((x, j) => (j === i ? fromHex((e.target as HTMLInputElement).value) : x)))} />
-              ${colors.length > (effect.type === 'color_wave' ? 2 : 1)
-                ? html`<button class="icon" title="Remove colour"
-                    @click=${() => set(colors.filter((_, j) => j !== i))}>✕</button>`
-                : nothing}
+              <span class="color-tools">
+                <button class="icon" title="Move earlier" ?disabled=${i === 0}
+                  @click=${() => { const l = [...colors]; [l[i - 1], l[i]] = [l[i], l[i - 1]]; set(l); }}>←</button>
+                <button class="icon" title="Move later" ?disabled=${i === colors.length - 1}
+                  @click=${() => { const l = [...colors]; [l[i + 1], l[i]] = [l[i], l[i + 1]]; set(l); }}>→</button>
+                <button class="icon" title="Remove colour" ?disabled=${colors.length <= 2}
+                  @click=${() => set(colors.filter((_, j) => j !== i))}>✕</button>
+              </span>
             </div>`
           )}
-          ${effect.type === 'color_chase' || colors.length < 2
-            ? html`<button class="small" @click=${() => set([...colors, [255, 255, 255]])}>+ Colour</button>`
+          ${colors.length < 16
+            ? html`<button class="add-color" title="Add a colour"
+                @click=${() => set([...colors, [255, 255, 255]])}>+</button>`
             : nothing}
+        </div>
+        <div class="palettes">
+          <span class="field-label">Palettes</span>
+          ${PALETTES.map(
+            (pal) => html`<button class="palette ${same(pal.colors, colors) ? 'active' : ''}"
+              title=${pal.name} @click=${() => set(pal.colors.map((c) => [...c]))}>
+              <span class="palette-swatch" style="background: linear-gradient(90deg, ${
+                pal.colors.map((c) => `rgb(${c.join(',')})`).join(', ')})"></span>
+              ${pal.name}
+            </button>`
+          )}
         </div>
         ${effect.type === 'color_chase'
           ? this._slider('Crossfade', 'crossfade', effect, { min: 0, max: 100, step: 1, unit: '%',
@@ -925,6 +1015,93 @@ export class DmxEffectsView extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .layer-note {
+      font-size: 0.82rem;
+      color: var(--secondary-text-color);
+      margin: -2px 0 10px;
+    }
+    .type-group + .type-group {
+      margin-top: 12px;
+    }
+    .type-group-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .badge {
+      display: inline-block;
+      margin-right: 4px;
+      padding: 0 6px;
+      border-radius: 8px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      line-height: 1.5;
+      background: color-mix(in srgb, var(--primary-color) 18%, transparent);
+    }
+    .badge.color {
+      background: linear-gradient(90deg, rgba(255, 60, 90, 0.35), rgba(120, 80, 255, 0.35), rgba(0, 200, 255, 0.35));
+    }
+    .layer-with {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+    }
+    .layer-with select {
+      padding: 3px 6px;
+      border-radius: 6px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      background: var(--secondary-background-color, #fafafa);
+    }
+    .color-nr {
+      font-size: 0.7rem;
+      color: var(--secondary-text-color);
+    }
+    .color {
+      gap: 2px;
+      padding: 4px 6px;
+      border-radius: 8px;
+      background: var(--secondary-background-color, #f5f5f5);
+    }
+    .color-tools {
+      display: inline-flex;
+    }
+    .color-tools .icon {
+      padding: 2px 4px;
+    }
+    button.add-color {
+      width: 44px;
+      height: 40px;
+      font-size: 1.2rem;
+      border: 1px dashed var(--divider-color, #bbb);
+      background: none;
+    }
+    .palettes {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-top: 12px;
+    }
+    .palettes .field-label {
+      margin-right: 6px;
+    }
+    button.palette {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px 4px 4px;
+      font-size: 0.8rem;
+      border: 2px solid transparent;
+    }
+    button.palette.active {
+      border-color: var(--primary-color);
+    }
+    .palette-swatch {
+      width: 36px;
+      height: 18px;
+      border-radius: 4px;
     }
     .types {
       display: grid;

@@ -184,9 +184,15 @@ def color_at(effect_type: str, x: float, params: dict) -> tuple[int, int, int]:
             return _lerp_color(colors[index], colors[(index + 1) % k], t)
         return tuple(int(c) for c in colors[index])
     if effect_type == "color_wave":
-        first = colors[0]
-        second = colors[1] if len(colors) > 1 else [0, 0, 0]
-        return _lerp_color(first, second, 0.5 - 0.5 * math.cos(2 * math.pi * x))
+        # Smoothly through every colour in turn and back to the first.
+        if len(colors) < 2:
+            colors = [colors[0], [0, 0, 0]]
+        k = len(colors)
+        scaled = x * k
+        index = int(scaled) % k
+        frac = scaled - math.floor(scaled)
+        eased = 0.5 - 0.5 * math.cos(math.pi * frac)
+        return _lerp_color(colors[index], colors[(index + 1) % k], eased)
     raise ValueError(f"Not a colour effect: {effect_type}")
 
 

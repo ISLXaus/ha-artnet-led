@@ -98,7 +98,7 @@ Switch the DMX Patch panel from **Patch** to **Effects** (top left):
 1. **+ New effect**, give it a name.
 2. **Pick an effect** from the cards (each shows its waveform or colours).
 3. **Tick fixtures** on the left; they appear in the **Order** list on the right, which is the order the effect flows through them. Drag rows (or use ↑/↓) to rearrange, or use *By address* / *Reverse*.
-4. **Adjust** speed, fades, size, spread, direction, shuffle, groups/blocks/wings and colours with sliders and buttons. The **Preview** strip animates the effect on screen as you change things.
+4. **Adjust** speed, fades, size, spread, direction, shuffle, groups/blocks/wings and colours with sliders and buttons. For *Colour steps* and *Colour fade*, pick 2 or more colours (add, reorder, or start from a palette). The **Preview** strip animates the effect on screen as you change things; **Layer with** shows it combined with another effect.
 5. Turn on **Live on fixtures** to run the effect on the real lights while you edit (it stops when you switch it off, change effect or leave the page).
 6. **Save & Apply**. Saved effects get a ▶ / ■ button in the list to run or stop them.
 
@@ -132,7 +132,7 @@ effects:
 **Types**
 
 * Intensity: `sine`, `ramp_up`, `ramp_down`, `triangle`, `square`, `chase` (one fixture after another), `sparkle` (random flashes). They move each fixture's intensity and keep its current colour.
-* Colour: `rainbow` (hue rotation), `color_chase` (steps through `colors`), `color_wave` (between the first two `colors`). They set colour at full intensity × the master level; dimmer-only fixtures follow the intensity.
+* Colour: `rainbow` (hue rotation), `color_chase` — *Colour steps* in the panel — (steps through `colors`, with optional `crossfade`) and `color_wave` — *Colour fade* — (fades smoothly through all `colors` in turn). Both take 2 or more colours. On their own they set colour at full intensity × the master level; dimmer-only fixtures follow the intensity.
 
 **Parameters** (all optional)
 
@@ -149,9 +149,11 @@ effects:
 | `duty` | 50 (`chase`: one fixture's share) | % of the cycle a `square`/`chase` step is on; for `sparkle`, how often fixtures flash. |
 | `crossfade` | 0 | % of each step spent fading instead of snapping (`square`, `chase`, `color_chase`). |
 | `fade_in` / `fade_out` | 1 / 1 | Seconds to fade the effect in when it starts and back to normal when it stops. |
-| `colors` | red, green, blue | `[r, g, b]` list for the colour effects. |
+| `colors` | red, green, blue | 2 or more `[r, g, b]` colours for colour steps / colour fade. |
 
-**Who controls a fixture** works like a console's "latest takes precedence": starting an effect takes its fixtures over from any other running effect, and controlling a fixture yourself (turning it on/off, changing colour) releases it from its effect. When an effect stops, its fixtures fade back to whatever their own light entity says. A fixture's `dmx_effect` attribute shows which effect is driving it. Dummy channels keep their fixed values while effects run; `fixed` fixtures can't be used in effects.
+**Layering intensity and colour.** Each fixture has an *intensity* layer and a *colour* layer, like attributes on a console. Intensity effects drive the intensity layer (and keep the fixture's colour); colour effects drive the colour layer. So one effect of each kind can run on the same fixtures at once — for example a *Chase* over a *Colour fade*: the chase decides which fixtures are lit and how bright, the colour fade decides their colour, each at its own speed. Stop either one and the other carries on.
+
+**Who controls a fixture** works per layer like a console's "latest takes precedence": starting an effect takes its layer over from any other effect on those fixtures, crossfading from it over the new effect's fade-in. Controlling a fixture yourself (turning it on/off, changing colour) releases it from all effects. When an effect stops, its layer fades back to whatever the fixture's own light entity says. A fixture's `dmx_effect` attribute lists the effects driving it. Dummy channels keep their fixed values while effects run; `fixed` fixtures can't be used in effects.
 
 ## Patch reference
 

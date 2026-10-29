@@ -53,8 +53,8 @@ export const EFFECT_TYPES: EffectTypeInfo[] = [
   { type: 'square', label: 'Pulse', kind: 'intensity', description: 'On / off blocks' },
   { type: 'sparkle', label: 'Sparkle', kind: 'intensity', description: 'Random flashes' },
   { type: 'rainbow', label: 'Rainbow', kind: 'color', description: 'Hue rotates through the spectrum' },
-  { type: 'color_chase', label: 'Colour chase', kind: 'color', description: 'Steps through your colours' },
-  { type: 'color_wave', label: 'Colour wave', kind: 'color', description: 'Blends between two colours' },
+  { type: 'color_chase', label: 'Colour steps', kind: 'color', description: 'Steps through 2+ colours you pick' },
+  { type: 'color_wave', label: 'Colour fade', kind: 'color', description: 'Fades smoothly through your colours' },
 ];
 
 export const isColorType = (type: EffectType) =>
@@ -77,6 +77,20 @@ export const PARAM_SPEC: Record<string, { default: number | null; min: number; m
 };
 
 export const DEFAULT_COLORS = [[255, 0, 0], [0, 255, 0], [0, 0, 255]];
+
+/** Quick colour palettes for colour steps / colour fade. */
+export const PALETTES: { name: string; colors: number[][] }[] = [
+  { name: 'RGB', colors: [[255, 0, 0], [0, 255, 0], [0, 0, 255]] },
+  { name: 'Warm', colors: [[255, 60, 0], [255, 150, 20], [255, 210, 120]] },
+  { name: 'Ocean', colors: [[0, 40, 255], [0, 200, 255], [0, 255, 170]] },
+  { name: 'Sunset', colors: [[255, 40, 90], [255, 120, 0], [150, 0, 255]] },
+  { name: 'Party', colors: [[255, 0, 160], [0, 255, 255], [255, 230, 0], [120, 0, 255]] },
+  { name: 'Police', colors: [[255, 0, 0], [0, 0, 255]] },
+];
+
+/** Which fixture layer an effect drives (mirrors effect_layer() in effect_engine.py). */
+export const effectLayer = (type: EffectType): 'intensity' | 'color' =>
+  isColorType(type) ? 'color' : 'intensity';
 
 export function p(params: EffectParams, key: keyof EffectParams): number {
   const v = params[key] as number | null | undefined;
@@ -231,8 +245,13 @@ export function colorAt(type: EffectType, x: number, params: EffectParams): [num
     if (cf > 0 && frac > 1 - cf) return lerp(colors[index], colors[(index + 1) % k], (frac - (1 - cf)) / cf);
     return colors[index] as [number, number, number];
   }
-  const second = colors[1] ?? [0, 0, 0];
-  return lerp(colors[0], second, 0.5 - 0.5 * Math.cos(2 * Math.PI * x));
+  // color_wave: smoothly through every colour in turn and back to the first.
+  const list = colors.length < 2 ? [colors[0], [0, 0, 0]] : colors;
+  const k = list.length;
+  const scaled = x * k;
+  const index = Math.floor(scaled) % k;
+  const frac = scaled - Math.floor(scaled);
+  return lerp(list[index], list[(index + 1) % k], 0.5 - 0.5 * Math.cos(Math.PI * frac));
 }
 
 export interface Frame {
