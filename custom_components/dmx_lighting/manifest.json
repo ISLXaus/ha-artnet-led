@@ -5,6 +5,9 @@
     "@ISLXaus"
   ],
   "config_flow": true,
+  "after_dependencies": [
+    "group"
+  ],
   "dependencies": [
     "http",
     "frontend",

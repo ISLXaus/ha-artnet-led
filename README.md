@@ -159,6 +159,17 @@ effects:
 
 In the Patch tab's list view, the **Output** tile of a fixture an effect is driving shows the effect's live output (marked **FX**) instead of the light entity's state. Dummy channels keep their fixed values while effects run; `fixed` fixtures can't be used in effects.
 
+## Light groups
+
+The **Groups** tab (next to Patch and Effects) shows and edits Home Assistant **light group helpers** made of your fixtures — the same groups you'd create under *Settings → Devices & services → Helpers → Group → Light group*, so they work in dashboards, automations, voice and as effect targets.
+
+* **Make one from a selection:** in the Patch tab's list view, tick fixtures (or the header box for all) and press **⧉ Create group (N)**. The Groups tab opens with them filled in; give it a name and press *Create group*.
+* **Or start from scratch:** *+ New group*, then tick fixtures.
+* **Edit:** change the name, add or remove fixtures, and reorder them with ↑/↓ — effects that use the group flow through the fixtures in this order. Lights in the group that aren't DMX fixtures are kept and shown as such.
+* **Delete** removes the helper. Effects that used it simply skip it.
+
+Group changes are saved straight to Home Assistant (no *Save & Apply*). Only fixtures that already have a light entity can join a group, so *Save & Apply* new fixtures first.
+
 ## Patch reference
 
 These are the options in the panel's dialogs, under the same names as in the YAML export. A complete patch looks like this:

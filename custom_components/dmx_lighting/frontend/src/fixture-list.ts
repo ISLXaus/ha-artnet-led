@@ -48,6 +48,8 @@ export class DmxFixtureList extends LitElement {
   @state() private _filter = '';
   @state() private _sort: SortKey = 'address';
   @state() private _desc = false;
+  /** Selected fixtures' entity ids, for "Create group". */
+  @state() private _picked: string[] = [];
   /** Live output of fixtures an effect is driving: name -> [level 0..1, rgb | null]. */
   @state() private _effectOut: Record<string, [number, number[] | null]> = {};
   private _unsubOutput?: Promise<() => Promise<void>>;
@@ -130,6 +132,27 @@ export class DmxFixtureList extends LitElement {
     >
       ${label}<span class="arrow">${active ? (this._desc ? '▼' : '▲') : ''}</span>
     </th>`;
+  }
+
+  private _pick(entityId: string, on: boolean) {
+    const list = this._picked.filter((e) => e !== entityId);
+    if (on) list.push(entityId);
+    this._picked = list;
+  }
+
+  /** Header checkbox: select / clear every visible fixture that has an entity. */
+  private _selectAll(rows: Row[]) {
+    const ids = rows
+      .map((r) => existingEntityId(this.hass, this.entityMap, this.node.host, r.universe, r.device))
+      .filter((e): e is string => !!e);
+    const all = ids.length > 0 && ids.every((id) => this._picked.includes(id));
+    return html`<input type="checkbox" aria-label="Select all" title="Select all" .checked=${all}
+      ?disabled=${!ids.length}
+      @change=${(e: Event) => {
+        const on = (e.target as HTMLInputElement).checked;
+        this._picked = on ? [...new Set([...this._picked, ...ids])]
+          : this._picked.filter((p) => !ids.includes(p));
+      }} />`;
   }
 
   /** Compact channel layout: "Dimmer · Red · Green · Blue · Mode 42". */
@@ -236,6 +259,19 @@ export class DmxFixtureList extends LitElement {
           ${all.length} fixture${all.length === 1 ? '' : 's'} · ${totalChannels} channels ·
           ${universes.length} universe${universes.length === 1 ? '' : 's'}
         </span>
+        ${this._picked.length
+          ? html`<span class="picked">
+              <button class="group-btn" title="Make a Home Assistant light group of the selected fixtures"
+                @click=${() => {
+                  this.dispatchEvent(new CustomEvent('create-group', {
+                    detail: { entities: [...this._picked] }, bubbles: true, composed: true }));
+                  this._picked = [];
+                }}>
+                ⧉ Create group (${this._picked.length})
+              </button>
+              <button class="clear-btn" title="Clear the selection" @click=${() => (this._picked = [])}>✕</button>
+            </span>`
+          : nothing}
         <button
           class="add"
           ?disabled=${!this.addUniverse}
@@ -254,6 +290,7 @@ export class DmxFixtureList extends LitElement {
               <table>
                 <thead>
                   <tr>
+                    <th class="select-col">${this._selectAll(rows)}</th>
                     <th class="swatch-col"></th>
                     ${this._header('name', 'Name')}
                     ${this._header('type', 'Type')}
@@ -286,6 +323,17 @@ export class DmxFixtureList extends LitElement {
                           }
                         }}
                       >
+                        <td class="select-col" @click=${(e: Event) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            aria-label="Select ${d.name}"
+                            title=${existing ? `Select ${d.name}` : 'Save & Apply first, then it can join a group'}
+                            ?disabled=${!existing}
+                            .checked=${!!existing && this._picked.includes(existing)}
+                            @keydown=${(e: KeyboardEvent) => e.stopPropagation()}
+                            @change=${(e: Event) => this._pick(existing!, (e.target as HTMLInputElement).checked)}
+                          />
+                        </td>
                         <td class="swatch-col">
                           <span class="swatch" style="background: ${deviceColor(r.index)}"></span>
                         </td>
@@ -463,8 +511,40 @@ export class DmxFixtureList extends LitElement {
       font-weight: 600;
       overflow-wrap: anywhere;
     }
-    td:nth-child(2) {
+    td:nth-child(3) {
       min-width: 9em;
+    }
+    .picked {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+    button.group-btn {
+      font: inherit;
+      padding: 8px 14px;
+      border-radius: 8px 0 0 8px;
+      border: none;
+      cursor: pointer;
+      background: var(--accent-color, #ff9800);
+      color: #000;
+      font-weight: 600;
+    }
+    button.clear-btn {
+      font: inherit;
+      padding: 8px 10px;
+      border-radius: 0 8px 8px 0;
+      border: none;
+      cursor: pointer;
+      background: var(--secondary-background-color, #f0f0f0);
+      color: var(--primary-text-color);
+    }
+    .select-col {
+      width: 18px;
+      padding-right: 0;
+    }
+    .select-col input {
+      margin: 3px 0 0;
+      cursor: pointer;
     }
     .entity {
       margin-top: 2px;
@@ -650,10 +730,21 @@ export class DmxFixtureList extends LitElement {
         border: none;
         background: none !important;
       }
-      td:nth-child(2) {
-        min-width: 0;
+      td.swatch-col {
+        grid-column: 1;
+        grid-row: 1;
+      }
+      td.select-col {
+        grid-column: 1;
+        grid-row: 2;
+        width: auto;
       }
       td:nth-child(3) {
+        grid-column: 2;
+        grid-row: 1;
+        min-width: 0;
+      }
+      td:nth-child(4) {
         grid-column: 3;
         grid-row: 1;
         text-align: right;

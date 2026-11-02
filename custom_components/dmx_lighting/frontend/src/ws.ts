@@ -97,3 +97,28 @@ export const callService = (
   serviceData: Record<string, unknown>
 ) =>
   hass.callWS<unknown>({ type: 'call_service', domain, service, service_data: serviceData });
+
+/** A Home Assistant light group helper (see groups.py). */
+export interface LightGroup {
+  entry_id: string;
+  name: string;
+  entity_id: string | null;
+  /** Member entity ids, in group order. */
+  entities: string[];
+  hide_members: boolean;
+}
+
+export const listGroups = (hass: HomeAssistant) =>
+  hass.callWS<{ groups: LightGroup[] }>({ type: 'dmx_lighting/groups/list' });
+
+export const createGroup = (hass: HomeAssistant, name: string, entities: string[]) =>
+  hass.callWS<LightGroup>({ type: 'dmx_lighting/groups/create', name, entities });
+
+export const updateGroup = (
+  hass: HomeAssistant,
+  entryId: string,
+  changes: { name?: string; entities?: string[] }
+) => hass.callWS<LightGroup>({ type: 'dmx_lighting/groups/update', entry_id: entryId, ...changes });
+
+export const deleteGroup = (hass: HomeAssistant, entryId: string) =>
+  hass.callWS<Record<string, never>>({ type: 'dmx_lighting/groups/delete', entry_id: entryId });

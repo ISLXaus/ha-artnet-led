@@ -32,6 +32,10 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_effect_preview_update)
     websocket_api.async_register_command(hass, ws_effect_output_subscribe)
 
+    from custom_components.dmx_lighting import groups
+
+    groups.async_register_commands(hass)
+
 
 def _store(hass: HomeAssistant):
     return hass.data[DOMAIN][DATA_STORE]

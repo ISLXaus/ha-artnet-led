@@ -21,10 +21,13 @@ import { newDevice, newNode } from './dialogs';
 import './universe-grid';
 import './fixture-list';
 import './effects-view';
+import './groups-view';
 import type { FixtureInfo } from './effects-view';
 import type { EffectPreset } from './effects-model';
 import type { PropertyValues } from 'lit';
 import './dialogs';
+
+type Mode = 'patch' | 'effects' | 'groups';
 
 type DialogState =
   | { kind: 'none' }
@@ -53,19 +56,28 @@ export class DmxPatchPanel extends LitElement {
   /** unique_id → entity_id of existing lights, refreshed when it might have changed. */
   @state() private _entityMap: EntityMap = {};
   /** Top-level tab: the patch (nodes, universes, fixtures) or the effects editor. */
-  @state() private _mode: 'patch' | 'effects' = DmxPatchPanel._loadMode();
+  @state() private _mode: Mode = DmxPatchPanel._loadMode();
+  /** Members for a new group started from the list view's selection. */
+  @state() private _groupPrefill: { entities: string[]; token: number } | null = null;
   /** Effect names as last loaded/saved: those have light entities to run. */
   @state() private _savedEffectNames: string[] = [];
 
-  private static _loadMode(): 'patch' | 'effects' {
+  private static _loadMode(): Mode {
     try {
-      return localStorage.getItem('dmx_lighting.mode') === 'effects' ? 'effects' : 'patch';
+      const mode = localStorage.getItem('dmx_lighting.mode');
+      return mode === 'effects' || mode === 'groups' ? mode : 'patch';
     } catch {
       return 'patch';
     }
   }
 
-  private _setMode(mode: 'patch' | 'effects') {
+  /** List view: "Create group" from the selected fixtures opens the Groups tab. */
+  private _onCreateGroup(e: CustomEvent) {
+    this._groupPrefill = { entities: e.detail.entities as string[], token: Date.now() };
+    this._setMode('groups');
+  }
+
+  private _setMode(mode: Mode) {
     this._mode = mode;
     try {
       localStorage.setItem('dmx_lighting.mode', mode);
@@ -530,6 +542,8 @@ export class DmxPatchPanel extends LitElement {
             class=${this._mode === 'patch' ? 'active' : ''} @click=${() => this._setMode('patch')}>Patch</button>
           <button role="tab" aria-selected=${this._mode === 'effects'}
             class=${this._mode === 'effects' ? 'active' : ''} @click=${() => this._setMode('effects')}>Effects</button>
+          <button role="tab" aria-selected=${this._mode === 'groups'}
+            class=${this._mode === 'groups' ? 'active' : ''} @click=${() => this._setMode('groups')}>Groups</button>
         </span>
         ${this._dirty ? html`<span class="dirty">unsaved changes</span>` : nothing}
         ${this._updateAvailable
@@ -552,7 +566,16 @@ export class DmxPatchPanel extends LitElement {
         </button>
       </div>
 
-      ${this._mode === 'effects'
+      ${this._mode === 'groups'
+        ? html`<div class="layout effects-layout">
+            <dmx-groups-view
+              .hass=${this.hass}
+              .fixtures=${this._fixtureInfos().filter((f) => f.type !== 'fixed')}
+              .prefill=${this._groupPrefill}
+              @panel-toast=${(e: CustomEvent) => this._showToast(e.detail)}
+            ></dmx-groups-view>
+          </div>`
+        : this._mode === 'effects'
         ? html`<div class="layout effects-layout">
             <dmx-effects-view
               .hass=${this.hass}
@@ -643,6 +666,7 @@ export class DmxPatchPanel extends LitElement {
                         .entityMap=${this._entityMap}
                         @add-device=${this._onAddDevice}
                         @edit-device=${this._onEditDevice}
+                        @create-group=${this._onCreateGroup}
                       ></dmx-fixture-list>
                     `
                   : universe
