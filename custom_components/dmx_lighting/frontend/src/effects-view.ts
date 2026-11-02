@@ -641,10 +641,16 @@ export class DmxEffectsView extends LitElement {
               @input=${(e: Event) => (this._filter = (e.target as HTMLInputElement).value)}
             />
             <div class="pick-list">
-              ${haGroups.length
-                ? html`<div class="pick-group">
-                    <div class="pick-head plain">Home Assistant groups</div>
-                    ${haGroups.map((g) => {
+              <div class="pick-group groups">
+                <div class="pick-head plain">
+                  Groups
+                  <button class="small link-btn" title="Make or edit light groups"
+                    @click=${() => this.dispatchEvent(new CustomEvent('open-groups', { bubbles: true, composed: true }))}>
+                    Manage groups
+                  </button>
+                </div>
+                ${haGroups.length
+                  ? haGroups.map((g) => {
                       const entry = `${GROUP_PREFIX}${g.entityId}`;
                       return html`<label class="pick-item" title=${g.fixtures.join(', ')}>
                         <input type="checkbox" .checked=${effect.fixtures.includes(entry)}
@@ -653,9 +659,13 @@ export class DmxEffectsView extends LitElement {
                         <span class="pick-sub">${g.fixtures.length} fixture${g.fixtures.length === 1 ? '' : 's'}${
                           g.total > g.fixtures.length ? ` of ${g.total} lights` : ''}</span>
                       </label>`;
-                    })}
-                  </div>`
-                : nothing}
+                    })
+                  : html`<div class="hint group-hint">
+                      ${q ? 'No groups match the filter.' : html`No light groups of these fixtures yet.
+                        Make one in the <b>Groups</b> tab (or tick fixtures in the Patch list view and
+                        use <b>Create group</b>) to use it here as one target.`}
+                    </div>`}
+              </div>
               ${usable.length
                 ? [...groups.entries()].map(([group, list]) => {
                     const names = list.map((f) => f.name);
@@ -1286,6 +1296,20 @@ export class DmxEffectsView extends LitElement {
     }
     .pick-head.plain {
       padding-left: 2px;
+      justify-content: space-between;
+    }
+    button.link-btn {
+      background: none;
+      color: var(--primary-color);
+      padding: 2px 6px;
+    }
+    .group-hint {
+      padding: 2px 4px 6px;
+      font-size: 0.78rem;
+    }
+    .pick-group.groups {
+      border-bottom: 1px solid var(--divider-color, #e0e0e0);
+      padding-bottom: 6px;
     }
     .group-icon {
       margin-right: 6px;

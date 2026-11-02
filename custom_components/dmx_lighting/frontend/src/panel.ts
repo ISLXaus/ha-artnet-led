@@ -22,12 +22,14 @@ import './universe-grid';
 import './fixture-list';
 import './effects-view';
 import './groups-view';
+import './scenes-view';
+import { effectEntityId } from './effects-model';
 import type { FixtureInfo } from './effects-view';
 import type { EffectPreset } from './effects-model';
 import type { PropertyValues } from 'lit';
 import './dialogs';
 
-type Mode = 'patch' | 'effects' | 'groups';
+type Mode = 'patch' | 'effects' | 'groups' | 'scenes';
 
 type DialogState =
   | { kind: 'none' }
@@ -65,7 +67,7 @@ export class DmxPatchPanel extends LitElement {
   private static _loadMode(): Mode {
     try {
       const mode = localStorage.getItem('dmx_lighting.mode');
-      return mode === 'effects' || mode === 'groups' ? mode : 'patch';
+      return mode === 'effects' || mode === 'groups' || mode === 'scenes' ? mode : 'patch';
     } catch {
       return 'patch';
     }
@@ -153,6 +155,8 @@ export class DmxPatchPanel extends LitElement {
 
   /** Fixture view: the 512-channel grid, or a table of all fixtures on the node. */
   @state() private _view: 'grid' | 'list' = DmxPatchPanel._loadView();
+  /** List view: show every universe ("All") instead of the selected one. */
+  @state() private _listAll = false;
 
   private static _loadView(): 'grid' | 'list' {
     try {
@@ -544,6 +548,8 @@ export class DmxPatchPanel extends LitElement {
             class=${this._mode === 'effects' ? 'active' : ''} @click=${() => this._setMode('effects')}>Effects</button>
           <button role="tab" aria-selected=${this._mode === 'groups'}
             class=${this._mode === 'groups' ? 'active' : ''} @click=${() => this._setMode('groups')}>Groups</button>
+          <button role="tab" aria-selected=${this._mode === 'scenes'}
+            class=${this._mode === 'scenes' ? 'active' : ''} @click=${() => this._setMode('scenes')}>Scenes</button>
         </span>
         ${this._dirty ? html`<span class="dirty">unsaved changes</span>` : nothing}
         ${this._updateAvailable
@@ -566,7 +572,16 @@ export class DmxPatchPanel extends LitElement {
         </button>
       </div>
 
-      ${this._mode === 'groups'
+      ${this._mode === 'scenes'
+        ? html`<div class="layout effects-layout">
+            <dmx-scenes-view
+              .hass=${this.hass}
+              .fixtures=${this._fixtureInfos()}
+              .effectEntities=${this._savedEffectNames.map((name) => ({ entityId: effectEntityId(name), name }))}
+              @panel-toast=${(e: CustomEvent) => this._showToast(e.detail)}
+            ></dmx-scenes-view>
+          </div>`
+        : this._mode === 'groups'
         ? html`<div class="layout effects-layout">
             <dmx-groups-view
               .hass=${this.hass}
@@ -584,6 +599,7 @@ export class DmxPatchPanel extends LitElement {
               .errors=${this._errors}
               .savedNames=${this._savedEffectNames}
               @effects-changed=${this._onEffectsChanged}
+              @open-groups=${() => this._setMode('groups')}
             ></dmx-effects-view>
           </div>`
         : html`
@@ -632,11 +648,23 @@ export class DmxPatchPanel extends LitElement {
                 </div>
 
                 <div class="universe-bar">
+                  ${this._view === 'list' && universeKeys.length > 1
+                    ? html`<button
+                        class="tab ${this._listAll ? 'active' : ''}"
+                        title="Show the fixtures of every universe"
+                        @click=${() => (this._listAll = true)}
+                      >
+                        All
+                      </button>`
+                    : nothing}
                   ${universeKeys.map(
                     (key) => html`
                       <button
-                        class="tab ${this._selectedUniverse === key ? 'active' : ''}"
-                        @click=${() => (this._selectedUniverse = key)}
+                        class="tab ${this._selectedUniverse === key && !(this._view === 'list' && this._listAll) ? 'active' : ''}"
+                        @click=${() => {
+                          this._selectedUniverse = key;
+                          this._listAll = false;
+                        }}
                       >
                         Universe ${key}
                       </button>
@@ -663,6 +691,7 @@ export class DmxPatchPanel extends LitElement {
                         .nodeIndex=${Number(this._selected.split(':')[1])}
                         .errors=${this._errors}
                         .addUniverse=${this._selectedUniverse}
+                        .universe=${this._listAll ? '' : this._selectedUniverse}
                         .entityMap=${this._entityMap}
                         @add-device=${this._onAddDevice}
                         @edit-device=${this._onEditDevice}

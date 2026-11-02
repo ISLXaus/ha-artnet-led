@@ -53,7 +53,7 @@ The **DMX Patch** panel in the Home Assistant sidebar (admin users only) is wher
 * **Nodes**: add Art-Net, sACN or KiNet nodes with all their options (see [Node options](#node-options)).
 * **Universes**: a 512-channel grid per universe. Click an empty channel to place a fixture, click a fixture to edit or delete it, drag it to re-address it. Channel overlaps are highlighted and rejected on save.
 * **Entity shortcut**: the fixture editor shows the light entity a saved fixture already has, with its state, and *Open entity* opens Home Assistant's entity dialog (controls, history, settings) without losing your edits. Entity ids in the fixture list are links to the same dialog.
-* **Fixture list**: switch a node from *Grid* to *List* to see all its fixtures across every universe in one table — name, entity, type, address (universe and channel range) and channel layout, with dummy channels shown by label and value. An *Output* tile at the end of each row shows the light's current colour, filled to its brightness with the percentage on it, and updates live as the light changes (it reflects the light entity's state). Filter by name, type, entity or label, sort by name, type or address, and click a fixture to edit it. Fixtures with overlaps or validation errors are highlighted, and a dot shows whether each light is on. *Add fixture* places a new one at the first free channel of the selected universe. The panel remembers which view you used last.
+* **Fixture list**: switch a node from *Grid* to *List* to see its fixtures in a table — of the selected universe, or of every universe with *All* — name, entity, type, address (universe and channel range) and channel layout, with dummy channels shown by label and value. An *Output* tile at the end of each row shows the light's current colour, filled to its brightness with the percentage on it, and updates live as the light changes (it reflects the light entity's state). Filter by name, type, entity or label, sort by name, type or address, and click a fixture to edit it. Fixtures with overlaps or validation errors are highlighted, and a dot shows whether each light is on. *Add fixture* places a new one at the first free channel of the selected universe. The panel remembers which view you used last.
 * **Live apply**: *Save & Apply* takes effect immediately — no Home Assistant restart. Entities keep their identity across saves (unique IDs are derived from `host/universe/channel`, so moving a fixture to another channel creates a new entity).
 * **Live DMX values**: toggle *Live DMX values* on any universe to watch the actual channel values update in real time (10 Hz).
 
@@ -163,12 +163,23 @@ In the Patch tab's list view, the **Output** tile of a fixture an effect is driv
 
 The **Groups** tab (next to Patch and Effects) shows and edits Home Assistant **light group helpers** made of your fixtures — the same groups you'd create under *Settings → Devices & services → Helpers → Group → Light group*, so they work in dashboards, automations, voice and as effect targets.
 
-* **Make one from a selection:** in the Patch tab's list view, tick fixtures (or the header box for all) and press **⧉ Create group (N)**. The Groups tab opens with them filled in; give it a name and press *Create group*.
+* **Make one from a selection:** in the Patch tab's list view, tick fixtures (the header box ticks them all; Shift-click a second box to tick or untick the range in between) and press **⧉ Create group (N)**. The Groups tab opens with them filled in; give it a name and press *Create group*.
 * **Or start from scratch:** *+ New group*, then tick fixtures.
 * **Edit:** change the name, add or remove fixtures, and reorder them with ↑/↓ — effects that use the group flow through the fixtures in this order. Lights in the group that aren't DMX fixtures are kept and shown as such.
 * **Delete** removes the helper. Effects that used it simply skip it.
 
 Group changes are saved straight to Home Assistant (no *Save & Apply*). Only fixtures that already have a light entity can join a group, so *Save & Apply* new fixtures first.
+
+## Scenes
+
+The **Scenes** tab edits Home Assistant **scenes** — the same ones as *Settings → Automations & Scenes → Scenes* — with your fixtures, light groups and effects in one place:
+
+* **+ New scene**, name it, then tick fixtures (by universe), *light groups* (⧉) and *effects* (✦) under **Add lights**.
+* For each one set **on/off**, **brightness** (an effect's level) and, where the light supports it, **colour** or **colour temperature**. Leave colour "unchanged" to keep the light's own colour.
+* **⟳ Capture current** sets everything in the scene to how it looks right now; **Live edit** applies each change to the lights as you make it; **▶ Activate** shows the scene (as edited, if not saved yet).
+* **Save** writes it straight to Home Assistant (no *Save & Apply*); **Delete** removes it. The ▶ next to each scene in the list activates it.
+
+Lights in a scene that aren't fixtures, groups or effects of this integration are kept as they are. Scenes made in the UI need `scene: !include scenes.yaml` in `configuration.yaml`, which new Home Assistant installs have by default.
 
 ## Patch reference
 

@@ -43,6 +43,8 @@ export class DmxFixtureList extends LitElement {
   @property({ attribute: false }) errors: PatchError[] = [];
   /** Universe new fixtures go into (the selected universe tab). */
   @property() addUniverse = '';
+  /** Only show this universe's fixtures ('' = every universe). */
+  @property() universe = '';
   @property({ attribute: false }) entityMap: EntityMap = {};
 
   @state() private _filter = '';
@@ -50,6 +52,9 @@ export class DmxFixtureList extends LitElement {
   @state() private _desc = false;
   /** Selected fixtures' entity ids, for "Create group". */
   @state() private _picked: string[] = [];
+  /** Entity ids of the visible rows in display order, and the last one clicked (shift-range). */
+  private _visibleIds: (string | undefined)[] = [];
+  private _anchor: number | null = null;
   /** Live output of fixtures an effect is driving: name -> [level 0..1, rgb | null]. */
   @state() private _effectOut: Record<string, [number, number[] | null]> = {};
   private _unsubOutput?: Promise<() => Promise<void>>;
@@ -75,6 +80,7 @@ export class DmxFixtureList extends LitElement {
     const rows: Row[] = [];
     const universes = this.node?.universes ?? {};
     for (const [universe, u] of Object.entries(universes)) {
+      if (this.universe && universe !== this.universe) continue;
       const devices = u.devices ?? [];
       const spans = devices.map((d) => footprint(d));
       devices.forEach((device, index) => {
@@ -138,6 +144,21 @@ export class DmxFixtureList extends LitElement {
     const list = this._picked.filter((e) => e !== entityId);
     if (on) list.push(entityId);
     this._picked = list;
+  }
+
+  /** Checkbox click; with Shift, every row between the last click and this one follows. */
+  private _pickClick(index: number, on: boolean, shift: boolean) {
+    const ids = this._visibleIds;
+    if (shift && this._anchor !== null && this._anchor < ids.length) {
+      const [from, to] = [Math.min(this._anchor, index), Math.max(this._anchor, index)];
+      const range = ids.slice(from, to + 1).filter((e): e is string => !!e);
+      this._picked = on
+        ? [...this._picked, ...range.filter((e) => !this._picked.includes(e))]
+        : this._picked.filter((e) => !range.includes(e));
+    } else if (ids[index]) {
+      this._pick(ids[index]!, on);
+    }
+    this._anchor = index;
   }
 
   /** Header checkbox: select / clear every visible fixture that has an entity. */
@@ -243,6 +264,8 @@ export class DmxFixtureList extends LitElement {
   render() {
     const all = this._rows();
     const rows = this._visibleRows();
+    this._visibleIds = rows.map((r) =>
+      existingEntityId(this.hass, this.entityMap, this.node.host, r.universe, r.device));
     const universes = Object.keys(this.node?.universes ?? {});
     const totalChannels = all.reduce((sum, r) => sum + (r.last - r.first + 1), 0);
 
@@ -300,7 +323,7 @@ export class DmxFixtureList extends LitElement {
                   </tr>
                 </thead>
                 <tbody>
-                  ${rows.map((r) => {
+                  ${rows.map((r, rowIndex) => {
                     const d = r.device;
                     const existing = existingEntityId(
                       this.hass, this.entityMap, this.node.host, r.universe, d);
@@ -327,11 +350,12 @@ export class DmxFixtureList extends LitElement {
                           <input
                             type="checkbox"
                             aria-label="Select ${d.name}"
-                            title=${existing ? `Select ${d.name}` : 'Save & Apply first, then it can join a group'}
+                            title=${existing ? `Select ${d.name} (Shift-click to select a range)` : 'Save & Apply first, then it can join a group'}
                             ?disabled=${!existing}
                             .checked=${!!existing && this._picked.includes(existing)}
                             @keydown=${(e: KeyboardEvent) => e.stopPropagation()}
-                            @change=${(e: Event) => this._pick(existing!, (e.target as HTMLInputElement).checked)}
+                            @click=${(e: MouseEvent) =>
+                              this._pickClick(rowIndex, (e.target as HTMLInputElement).checked, e.shiftKey)}
                           />
                         </td>
                         <td class="swatch-col">

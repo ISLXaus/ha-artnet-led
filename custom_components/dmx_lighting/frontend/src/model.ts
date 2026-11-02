@@ -68,6 +68,8 @@ export interface HassEntityLite {
 
 export interface HomeAssistant {
   callWS<T>(msg: Record<string, unknown>): Promise<T>;
+  /** Home Assistant REST API (e.g. config/scene/config/<id>). */
+  callApi?<T>(method: 'GET' | 'POST' | 'DELETE', path: string, data?: unknown): Promise<T>;
   states?: Record<string, HassEntityLite>;
   /** Registered sidebar panels; ours carries the panel script URL (for update checks). */
   panels?: Record<string, { config?: { _panel_custom?: { module_url?: string } } }>;
