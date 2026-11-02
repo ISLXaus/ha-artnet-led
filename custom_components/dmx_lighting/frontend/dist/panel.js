@@ -3117,10 +3117,10 @@ var Dt=Object.defineProperty;var er=Object.getOwnPropertyDescriptor;var u=(o,i,e
         <span class="mode-toggle" role="tablist" aria-label="Section">
           <button role="tab" aria-selected=${this._mode==="patch"}
             class=${this._mode==="patch"?"active":""} @click=${()=>this._setMode("patch")}>Patch</button>
-          <button role="tab" aria-selected=${this._mode==="effects"}
-            class=${this._mode==="effects"?"active":""} @click=${()=>this._setMode("effects")}>Effects</button>
           <button role="tab" aria-selected=${this._mode==="groups"}
             class=${this._mode==="groups"?"active":""} @click=${()=>this._setMode("groups")}>Groups</button>
+          <button role="tab" aria-selected=${this._mode==="effects"}
+            class=${this._mode==="effects"?"active":""} @click=${()=>this._setMode("effects")}>Effects</button>
           <button role="tab" aria-selected=${this._mode==="scenes"}
             class=${this._mode==="scenes"?"active":""} @click=${()=>this._setMode("scenes")}>Scenes</button>
         </span>

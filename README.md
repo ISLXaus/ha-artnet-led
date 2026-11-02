@@ -161,7 +161,7 @@ In the Patch tab's list view, the **Output** tile of a fixture an effect is driv
 
 ## Light groups
 
-The **Groups** tab (next to Patch and Effects) shows and edits Home Assistant **light group helpers** made of your fixtures — the same groups you'd create under *Settings → Devices & services → Helpers → Group → Light group*, so they work in dashboards, automations, voice and as effect targets.
+The **Groups** tab (between Patch and Effects) shows and edits Home Assistant **light group helpers** made of your fixtures — the same groups you'd create under *Settings → Devices & services → Helpers → Group → Light group*, so they work in dashboards, automations, voice and as effect targets.
 
 * **Make one from a selection:** in the Patch tab's list view, tick fixtures (the header box ticks them all; Shift-click a second box to tick or untick the range in between) and press **⧉ Create group (N)**. The Groups tab opens with them filled in; give it a name and press *Create group*.
 * **Or start from scratch:** *+ New group*, then tick fixtures.
