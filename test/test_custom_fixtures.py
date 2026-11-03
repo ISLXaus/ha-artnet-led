@@ -393,3 +393,27 @@ def test_amber_split():
     assert (r, b, a) == (0, 255, 255) and round(g) == 64
     # Without an amber channel nothing changes.
     assert to_values("rgb", 1, True, 255, 255, 128, 0) == [255, 128, 0]
+
+
+async def test_fixture_model_is_kept_and_checked(hass, hass_ws_client):
+    """The panel's fixture library name (e.g. Blinder II C) is stored with the device."""
+    device = {**RGBAW_16BIT, "model": "Blinder II C"}
+    assert _errors(hass, device) == []
+    errors = _errors(hass, {**RGBAW_16BIT, "model": 5})
+    assert [(e["code"], e["path"]) for e in errors] == [
+        ("invalid_model", "nodes/0/universes/1/devices/0/model")]
+    # It never reaches the light entity config...
+    config = patch_node_to_setup_config(_patch(device)["nodes"][0])
+    assert "model" not in config["universes"][1]["devices"][0]
+
+    # ...but survives a YAML round trip.
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": "dmx_lighting/patch/export", "patch": _patch(device)})
+    yaml_text = (await client.receive_json())["result"]["yaml"]
+    assert "model: Blinder II C" in yaml_text
+    await client.send_json({"id": 2, "type": "dmx_lighting/patch/import", "content": yaml_text})
+    result = (await client.receive_json())["result"]
+    assert result["valid"], result["errors"]
+    assert result["patch"]["nodes"][0]["universes"]["1"]["devices"][0]["model"] == "Blinder II C"

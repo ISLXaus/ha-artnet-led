@@ -11,6 +11,7 @@ import {
   deviceColor,
   effectiveTransition,
   existingEntityId,
+  fixtureModel,
   footprint,
   openMoreInfo,
   hasCustomSetup,
@@ -104,7 +105,7 @@ export class DmxFixtureList extends LitElement {
       if (!q) return true;
       const d = r.device;
       const labels = (d.channel_labels ?? []).filter(Boolean).join(' ');
-      return [d.name, d.friendly_name ?? '', d.type, `light.${slugifyName(d.name)}`, labels]
+      return [d.name, d.friendly_name ?? '', d.type, d.model ?? '', `light.${slugifyName(d.name)}`, labels]
         .join(' ')
         .toLowerCase()
         .includes(q);
@@ -114,7 +115,8 @@ export class DmxFixtureList extends LitElement {
     const cmp: Record<SortKey, (a: Row, b: Row) => number> = {
       address: byAddress,
       name: (a, b) => a.device.name.localeCompare(b.device.name) || byAddress(a, b),
-      type: (a, b) => a.device.type.localeCompare(b.device.type) || byAddress(a, b),
+      type: (a, b) =>
+        (a.device.model || a.device.type).localeCompare(b.device.model || b.device.type) || byAddress(a, b),
     };
     rows.sort(cmp[this._sort]);
     if (this._desc) rows.reverse();
@@ -384,7 +386,9 @@ export class DmxFixtureList extends LitElement {
                           ${problem ? html`<div class="problem">⚠ ${problem}</div>` : nothing}
                         </td>
                         <td>
-                          ${d.type}
+                          ${fixtureModel(d)
+                            ? html`<span class="model">${d.model}</span><div class="sub">${d.type}</div>`
+                            : d.type}
                           ${d.channel_size && d.channel_size !== '8bit'
                             ? html`<div class="sub">${d.channel_size}</div>`
                             : nothing}
@@ -574,6 +578,9 @@ export class DmxFixtureList extends LitElement {
       margin-top: 2px;
       white-space: nowrap;
       color: var(--secondary-text-color);
+    }
+    .model {
+      font-weight: 500;
     }
     .sub {
       font-size: 0.78rem;

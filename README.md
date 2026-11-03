@@ -82,7 +82,9 @@ In the patch (and its YAML export) a custom layout is the regular [`channel_setu
 
 `channel_labels` is only used by the panel.
 
-Example: a 13-channel 16-bit RGBAW fixture (Dimmer, Red, Green, Blue, Amber and White, each with a fine channel, then Strobe where 0–10 is open). Make it an `rgbw` fixture with channel size `16bit` and a dimmer channel, unscaled colours and a trailing Strobe dummy channel at 0. Amber is mixed automatically from the colour you pick:
+**Fixture library**: the *Type* list starts with ready-made fixtures. Picking one fills in the type, channel size and channel layout for you (you can still adjust dummy values and labels). The panel remembers the model (a panel-only `model` key) and shows it in the list view; changing the size or the light channels turns it back into a generic fixture. Currently included: **Blinder II C**.
+
+Example: the Blinder II C, a 13-channel 16-bit RGBAW fixture (Dimmer, Red, Green, Blue, Amber and White, each with a fine channel, then Strobe where 0–10 is open). Make it an `rgbw` fixture with channel size `16bit` and a dimmer channel, unscaled colours and a trailing Strobe dummy channel at 0. Amber is mixed automatically from the colour you pick:
 
 ```yaml
 - channel: 1

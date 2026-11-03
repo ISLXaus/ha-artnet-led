@@ -4,6 +4,9 @@ import {
   PatchDevice,
   PatchNode,
   DEVICE_TYPES,
+  FIXTURE_LIBRARY,
+  applyFixtureModel,
+  fixtureModel,
   NODE_TYPES,
   CHANNEL_SIZES,
   CORRECTIONS,
@@ -41,6 +44,9 @@ function rowsFromDevice(device: PatchDevice): ChannelRow[] {
 }
 
 /** Problem with a row for the given type, or '' if it is fine. Mirrors channel_setup_errors(). */
+/** Type-list values for fixture library entries ("model:Blinder II C"). */
+const MODEL_PREFIX = 'model:';
+
 function rowProblem(row: ChannelRow, type: string): string {
   if (row.fn === FIXED) {
     if (!Number.isInteger(row.value) || row.value < 0 || row.value > 255) return 'Value must be 0–255';
@@ -275,7 +281,12 @@ export class DmxDeviceDialog extends LitElement {
   }
 
   private _set<K extends keyof PatchDevice>(key: K, value: PatchDevice[K]) {
-    this._working = { ...this._working, [key]: value };
+    this._working = this._checkModel({ ...this._working, [key]: value });
+  }
+
+  /** Drop the library model once the fixture no longer matches it (size or layout changed). */
+  private _checkModel(device: PatchDevice): PatchDevice {
+    return device.model && !fixtureModel(device) ? { ...device, model: null } : device;
   }
 
   /** Shortcut to the fixture's light entity, for fixtures that already have one. */
@@ -309,13 +320,22 @@ export class DmxDeviceDialog extends LitElement {
 
   private _setRows(rows: ChannelRow[] | null) {
     this._rows = rows;
-    this._working = {
+    this._working = this._checkModel({
       ...this._working,
       ...(rows ? rowsToSetup(rows) : { channel_setup: null, channel_labels: null }),
-    };
+    });
   }
 
   private _setType(type: string) {
+    if (type.startsWith(MODEL_PREFIX)) {
+      const model = FIXTURE_LIBRARY.find((m) => m.name === type.slice(MODEL_PREFIX.length));
+      if (model) {
+        this._working = applyFixtureModel(this._working, model);
+        this._rows = rowsFromDevice(this._working);
+      }
+      return;
+    }
+    this._working = { ...this._working, model: null };
     this._set('type', type);
     // Binary fixtures are a single on/off channel; they have no channel layout.
     if (type === 'binary' && this._rows) this._setRows(null);
@@ -463,6 +483,7 @@ export class DmxDeviceDialog extends LitElement {
     const d = this._working;
     const [first, last] = footprint(d);
     const showTemp = d.type === 'color_temp' || d.type === 'rgbww';
+    const model = fixtureModel(d);
 
     return html`
       <div
@@ -513,11 +534,24 @@ export class DmxDeviceDialog extends LitElement {
             <div>
               <label>Type</label>
               <select
-                .value=${d.type}
+                .value=${model ? MODEL_PREFIX + model.name : d.type}
                 @change=${(e: Event) => this._setType((e.target as HTMLSelectElement).value)}
               >
-                ${DEVICE_TYPES.map((t) => html`<option value=${t} ?selected=${d.type === t}>${t}</option>`)}
+                <optgroup label="Fixtures">
+                  ${FIXTURE_LIBRARY.map(
+                    (m) =>
+                      html`<option value=${MODEL_PREFIX + m.name} ?selected=${model === m}>${m.name}</option>`
+                  )}
+                </optgroup>
+                <optgroup label="Generic">
+                  ${DEVICE_TYPES.map(
+                    (t) => html`<option value=${t} ?selected=${!model && d.type === t}>${t}</option>`
+                  )}
+                </optgroup>
               </select>
+              ${model
+                ? html`<div class="hint">${model.description} · ${model.type} light</div>`
+                : nothing}
             </div>
             <div>
               <label>DMX channel (1-512)</label>

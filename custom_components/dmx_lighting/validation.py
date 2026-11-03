@@ -60,8 +60,12 @@ DEFAULT_CHANNEL_SETUP: dict[str, Any] = {
 #   id:             panel-internal identity
 #   channel_labels: per-channel labels (list aligned with channel_setup, entries
 #                   str or null), e.g. "Mode" / "Strobe" for dummy channels
+#   model:          fixture library entry the device was made from (e.g. "Blinder II C"),
+#                   shown by the panel instead of the bare type
 CONF_CHANNEL_LABELS = "channel_labels"
-PANEL_ONLY_KEYS = frozenset({"id", CONF_CHANNEL_LABELS})
+CONF_MODEL = "model"
+PANEL_ONLY_KEYS = frozenset({"id", CONF_CHANNEL_LABELS, CONF_MODEL})
+MAX_MODEL_LENGTH = 64
 
 MAX_LABEL_LENGTH = 32
 
@@ -333,6 +337,10 @@ def validate_patch(hass: HomeAssistant, patch: dict, runtime: DmxRuntime) -> lis
                 setup_errors = channel_setup_errors(
                     validated[CONF_DEVICE_TYPE], device.get(CONF_CHANNEL_SETUP),
                     device.get(CONF_CHANNEL_LABELS))
+                model = device.get(CONF_MODEL)
+                if model is not None and (not isinstance(model, str) or len(model) > MAX_MODEL_LENGTH):
+                    setup_errors.append((CONF_MODEL, "invalid_model",
+                                         f"Fixture model must be text of at most {MAX_MODEL_LENGTH} characters"))
                 for field, code, message in setup_errors:
                     error(f"{device_path}/{field}", code, message)
                 if setup_errors:

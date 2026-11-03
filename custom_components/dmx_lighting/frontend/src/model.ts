@@ -18,6 +18,8 @@ export interface PatchDevice {
   channel_setup?: string | ChannelEntry[] | null;
   /** Panel-only labels aligned with channel_setup (e.g. "Mode" for a dummy channel). */
   channel_labels?: (string | null)[] | null;
+  /** Panel-only: the fixture library entry this device was made from (FIXTURE_LIBRARY). */
+  model?: string | null;
   min_temp?: string;
   max_temp?: string;
 }
@@ -126,6 +128,53 @@ export const ALLOWED_FUNCTIONS: Record<string, string> = {
   rgbww: 'dcChHtTrRgGbBuUaA',
   xy: 'dxy',
 };
+
+/** A ready-made fixture: picking it in the Type list fills in type, size and layout. */
+export interface FixtureModel {
+  name: string;
+  description: string;
+  type: string;
+  channel_size: string;
+  channel_setup: ChannelEntry[];
+  channel_labels: (string | null)[];
+}
+
+/** Fixture library shown at the top of the Type list. */
+export const FIXTURE_LIBRARY: FixtureModel[] = [
+  {
+    name: 'Blinder II C',
+    description: '13ch: 16-bit Dimmer, Red, Green, Blue, Amber, White + Strobe',
+    type: 'rgbw',
+    channel_size: '16bit',
+    channel_setup: ['d', 'R', 'G', 'B', 'A', 'W', 0],
+    channel_labels: [null, null, null, null, null, null, 'Strobe'],
+  },
+];
+
+/** The library entry a device still matches (same type, size and channel functions). */
+export function fixtureModel(device: PatchDevice): FixtureModel | undefined {
+  const model = FIXTURE_LIBRARY.find((m) => m.name === device.model);
+  if (!model) return undefined;
+  const setup = Array.from((device.channel_setup ?? []) as string | ChannelEntry[]);
+  const sameLayout =
+    setup.length === model.channel_setup.length &&
+    setup.every((e, i) => (isFixedValue(e) ? isFixedValue(model.channel_setup[i]) : e === model.channel_setup[i]));
+  return device.type === model.type && (device.channel_size ?? '8bit') === model.channel_size && sameLayout
+    ? model
+    : undefined;
+}
+
+/** The device made into a library fixture (keeps name, address and transition). */
+export function applyFixtureModel(device: PatchDevice, model: FixtureModel): PatchDevice {
+  return {
+    ...device,
+    model: model.name,
+    type: model.type,
+    channel_size: model.channel_size,
+    channel_setup: [...model.channel_setup],
+    channel_labels: [...model.channel_labels],
+  };
+}
 
 /** Human names for channel_setup letters (see README "channel_setup"). */
 export const FUNCTION_NAMES: Record<string, string> = {
