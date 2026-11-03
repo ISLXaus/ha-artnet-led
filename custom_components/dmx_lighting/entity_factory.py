@@ -16,12 +16,14 @@ from custom_components.dmx_lighting.const import (
     AVAILABLE_CORRECTIONS,
     CHANNEL_SIZE,
     CONF_BYTE_ORDER,
+    CONF_CHANNEL_SETUP,
     CONF_CHANNEL_SIZE,
     CONF_DEVICE_CHANNEL,
     CONF_OUTPUT_CORRECTION,
     CONF_SEND_PARTIAL_UNIVERSE,
     UNIQUE_ID_PREFIX,
 )
+from custom_components.dmx_lighting.channel_switch import split_fixed_edges
 
 log = logging.getLogger(__name__)
 
@@ -83,20 +85,37 @@ def create_light_entities(
                     unique_id = entity.unique_id
             used_unique_ids.append(unique_id)
 
+            # In 16-bit+ fixtures, dummy channels at the start/end are plain 8-bit
+            # channels of their own (strobe, mode...); the light drives the rest.
+            head: list[int] = []
+            tail: list[int] = []
+            if byte_size > 1 and device[CONF_DEVICE_TYPE] != "binary" and device.get(CONF_CHANNEL_SETUP):
+                head, main, tail = split_fixed_edges(device[CONF_CHANNEL_SETUP])
+                if head or tail:
+                    device[CONF_CHANNEL_SETUP] = main
+
             # create device
             device["unique_id"] = unique_id
             d = cls(**device)
             d.set_type(device[CONF_DEVICE_TYPE])
 
+            light_start = channel + len(head)
             d.set_channel(
                 universe.add_channel(
-                    start=channel,
+                    start=light_start,
                     width=d.channel_width,
                     channel_name=d.name,
                     byte_size=byte_size,
                     byte_order=byte_order,
                 )
             )
+            for offset, values in ((channel, head), (light_start + d.channel_width * byte_size, tail)):
+                if values:
+                    fixed = universe.add_channel(
+                        start=offset, width=len(values),
+                        channel_name=f"{d.name} (fixed @{offset})", byte_size=1)
+                    fixed.set_values(values)
+                    d.fixed_channels.append(fixed)
 
             d.channel.set_output_correction(AVAILABLE_CORRECTIONS.get(
                 device[CONF_OUTPUT_CORRECTION]

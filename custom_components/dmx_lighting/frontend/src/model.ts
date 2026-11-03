@@ -121,9 +121,9 @@ export const ALLOWED_FUNCTIONS: Record<string, string> = {
   binary: '',
   dimmer: 'd',
   color_temp: 'dcChHtT',
-  rgb: 'drRgGbBuUwW',
-  rgbw: 'drRgGbBuUwW',
-  rgbww: 'dcChHtTrRgGbBuU',
+  rgb: 'drRgGbBuUaAwW',
+  rgbw: 'drRgGbBuUaAwW',
+  rgbww: 'dcChHtTrRgGbBuUaA',
   xy: 'dxy',
 };
 
@@ -136,6 +136,8 @@ export const FUNCTION_NAMES: Record<string, string> = {
   G: 'Green (unscaled)',
   b: 'Blue',
   B: 'Blue (unscaled)',
+  a: 'Amber',
+  A: 'Amber (unscaled)',
   w: 'White',
   W: 'White (unscaled)',
   c: 'Cool white',
@@ -192,11 +194,47 @@ export function byteSize(device: PatchDevice): number {
   return BYTE_SIZE[device.channel_size ?? '8bit'] ?? 1;
 }
 
+/**
+ * DMX slots per logical channel. Mirrors split_fixed_edges() in channel_switch.py:
+ * in 16-bit+ fixtures, dummy channels at the start and end are single 8-bit channels
+ * (strobe, mode...); everything else takes the fixture's channel size.
+ */
+export function channelSlots(device: PatchDevice): number[] {
+  const size = byteSize(device);
+  const entries = device.type === 'binary' ? ['d'] : setupEntries(device).slice(0, channelWidth(device));
+  const slots = entries.map(() => size);
+  if (size > 1 && hasCustomSetup(device) && entries.some((e) => !isFixedValue(e))) {
+    for (let i = 0; i < entries.length && isFixedValue(entries[i]); i++) slots[i] = 1;
+    for (let i = entries.length - 1; i >= 0 && isFixedValue(entries[i]); i--) slots[i] = 1;
+  }
+  return slots;
+}
+
+/** First DMX channel of each logical channel of a device. */
+export function channelStarts(device: PatchDevice): number[] {
+  let at = device.channel;
+  return channelSlots(device).map((n) => {
+    const start = at;
+    at += n;
+    return start;
+  });
+}
+
+/** Index of the logical channel covering DMX channel `ch` (-1 if outside). */
+export function channelIndexAt(device: PatchDevice, ch: number): number {
+  let at = device.channel;
+  const slots = channelSlots(device);
+  for (let i = 0; i < slots.length; i++) {
+    if (ch >= at && ch < at + slots[i]) return i;
+    at += slots[i];
+  }
+  return -1;
+}
+
 /** Inclusive [first, last] DMX channels occupied by a device. */
 export function footprint(device: PatchDevice): [number, number] {
-  const width = channelWidth(device);
   const first = device.channel;
-  return [first, first + width * byteSize(device) - 1];
+  return [first, first + channelSlots(device).reduce((a, b) => a + b, 0) - 1];
 }
 
 /** Lowest allowed universe number. Mirrors validation.py: E1.31 forbids universe 0. */

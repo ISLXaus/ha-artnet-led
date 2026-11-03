@@ -12,6 +12,7 @@ import {
   MAX_LABEL_LENGTH,
   ChannelEntry,
   byteSize,
+  channelStarts,
   HomeAssistant,
   footprint,
   hasCustomSetup,
@@ -363,6 +364,7 @@ export class DmxDeviceDialog extends LitElement {
     if (d.type === 'binary') return nothing;
     const rows = this._rows;
     const allowed = ALLOWED_FUNCTIONS[d.type] ?? '';
+    const starts = channelStarts(d);
     return html`
       <label class="check">
         <input
@@ -374,7 +376,11 @@ export class DmxDeviceDialog extends LitElement {
       </label>
       <div class="hint">
         ${rows
-          ? 'Light channels follow the entity; dummy channels always send their fixed value (use them for mode, strobe or macro channels).'
+          ? `Light channels follow the entity; dummy channels always send their fixed value (use them for mode, strobe or macro channels).${
+              byteSize(d) > 1
+                ? ' In this ' + d.channel_size + ' fixture, dummy channels at the start or end are single 8-bit channels; each light channel uses ' + byteSize(d) + ' (coarse + fine).'
+                : ''
+            }`
           : `Uses the ${d.type} default. Turn on to reorder channels or add dummy channels such as Mode or Strobe.`}
       </div>
       ${rows
@@ -385,7 +391,7 @@ export class DmxDeviceDialog extends LitElement {
                 const dummy = row.fn === FIXED;
                 return html`
                   <div class="ch-row ${problem ? 'invalid' : ''}" title=${problem}>
-                    <span class="ch-nr">${d.channel + i * byteSize(d)}</span>
+                    <span class="ch-nr">${starts[i] ?? d.channel}</span>
                     <select
                       aria-label="Channel ${i + 1} function"
                       @change=${(e: Event) =>

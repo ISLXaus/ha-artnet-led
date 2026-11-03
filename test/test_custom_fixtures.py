@@ -37,6 +37,17 @@ CUSTOM_DIMMER = {
     "channel_labels": [None, "Curve"],
 }
 
+# 13ch RGBAW: Dimmer/fine, Red/fine, Green/fine, Blue/fine, Amber/fine, White/fine, Strobe.
+RGBAW_16BIT = {
+    "id": "dev-3",
+    "channel": 1,
+    "name": "rgbaw_1",
+    "type": "rgbw",
+    "channel_size": "16bit",
+    "channel_setup": ["d", "R", "G", "B", "A", "W", 0],
+    "channel_labels": [None, None, None, None, None, None, "Strobe"],
+}
+
 
 def _patch(*devices) -> dict:
     return {
@@ -75,7 +86,13 @@ async def test_footprint_includes_dummy_channels():
     assert compute_dmx_footprint(CUSTOM_RGB) == (1, 6)
     # Dimmers used to be fixed at one channel; dummy channels now widen them.
     assert compute_dmx_footprint(CUSTOM_DIMMER) == (20, 21)
-    assert compute_dmx_footprint({**CUSTOM_DIMMER, "channel_size": "16bit"}) == (20, 23)
+    # 16-bit: the dimmer takes 2 channels, the trailing dummy a single 8-bit one.
+    assert compute_dmx_footprint({**CUSTOM_DIMMER, "channel_size": "16bit"}) == (20, 22)
+    # Dummies between light channels keep the fixture's channel size.
+    assert compute_dmx_footprint({**CUSTOM_DIMMER, "type": "rgb", "channel_size": "16bit",
+                                  "channel_setup": [0, "r", 5, "g", 7]}) == (20, 27)
+    # The 13-channel RGBAW fixture: 16-bit dimmer + 5 colours, 8-bit strobe.
+    assert compute_dmx_footprint(RGBAW_16BIT) == (1, 13)
 
 
 async def test_overlap_with_dummy_channel_is_rejected(hass):
@@ -310,8 +327,69 @@ async def test_dummy_values_with_16bit_channels(hass, hass_storage):
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    # 16-bit: the fixed value is the coarse byte (17 * 256), like other letters.
-    assert await _values(hass, "par_1") == [0, 17 * 256]
+    # 16-bit: the dimmer is 16-bit, the trailing dummy is its own 8-bit channel.
+    assert await _values(hass, "par_1") == [0]
+    assert _universe_bytes(hass, 20, 3) == [0, 0, 17]
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+def _universe_bytes(hass, first: int, count: int) -> list[int]:
+    handle = next(h for h in DmxRuntime.get(hass).handles() if h.host == "127.0.0.1")
+    universe = handle.node.get_universe(1)
+    for channel in universe._channels.values():
+        channel.to_buffer(universe._data)
+    return list(universe._data[first - 1:first - 1 + count])
+
+
+async def test_16bit_rgbaw_with_8bit_strobe(hass, hass_storage):
+    hass_storage[STORAGE_KEY] = {"version": 1, "data": _patch(RGBAW_16BIT)}
+    entry = MockConfigEntry(domain=DOMAIN, title="DMX Patch", data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Off: everything 0, strobe (ch 13) open.
+    assert _universe_bytes(hass, 1, 14) == [0] * 14
+
+    # Orange: amber does most of it, a little red on top; dimmer at full.
+    await hass.services.async_call(
+        "light", "turn_on",
+        {"entity_id": "light.rgbaw_1", "rgbw_color": [255, 128, 0, 0], "brightness": 255},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    await _values(hass, "rgbaw_1")
+    dmx = _universe_bytes(hass, 1, 14)
+    dimmer, red, green, blue, amber, white = (dmx[i] for i in range(0, 12, 2))
+    assert dimmer == 255 and amber == 255 and blue == 0 and white == 0 and green == 0
+    assert 100 < red < 150
+    assert dmx[12] == 0 and dmx[13] == 0  # strobe open, next fixture's channel untouched
+
+    # Pure blue: no amber.
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": "light.rgbaw_1", "rgbw_color": [0, 0, 255, 0]},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    await _values(hass, "rgbaw_1")
+    dmx = _universe_bytes(hass, 1, 13)
+    assert dmx[6] == 255 and dmx[8:10] == [0, 0]
+
+    state = hass.states.get("light.rgbaw_1")
+    assert state.attributes["dmx_fixed_channels"] == {13: 0}
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+def test_amber_split():
+    from custom_components.dmx_lighting.channel_switch import amber_split, to_values
+    # Amber's own colour comes entirely from the amber channel.
+    assert amber_split(255, 191.25, 0) == (0, 0, 0, 255)
+    # White keeps blue; amber takes the red/green it can.
+    r, g, b, a = amber_split(255, 255, 255)
+    assert (r, b, a) == (0, 255, 255) and round(g) == 64
+    # Without an amber channel nothing changes.
+    assert to_values("rgb", 1, True, 255, 255, 128, 0) == [255, 128, 0]

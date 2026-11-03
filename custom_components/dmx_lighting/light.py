@@ -111,6 +111,8 @@ class DmxBaseLight(LightEntity, RestoreEntity):
         # Set by the effect engine; see effect_engine.py.
         self.effect_engine = None
         self._restoring = False
+        # 8-bit dummy channels at the start/end of a 16-bit+ fixture (entity_factory.py).
+        self.fixed_channels: list = []
 
         self._channel: pyartnet.base.Channel
 
@@ -236,6 +238,10 @@ class DmxBaseLight(LightEntity, RestoreEntity):
                         self._channel._start, self._channel._start + self._channel._width, 1
                     )
                 ],
+                **({"dmx_fixed_channels": {
+                    ch._start + i: v
+                    for ch in self.fixed_channels for i, v in enumerate(ch.get_values())
+                }} if self.fixed_channels else {}),
                 "dmx_values": self._channel.get_values(),
                 "values": self._vals,
                 "dmx_effect": self.effect_owner,

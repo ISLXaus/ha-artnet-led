@@ -33,7 +33,11 @@ from custom_components.dmx_lighting.const import (
     NODE_TYPES,
 )
 from custom_components.dmx_lighting.runtime import DmxRuntime, node_key
-from custom_components.dmx_lighting.channel_switch import allowed_chars_per_type, is_fixed_value
+from custom_components.dmx_lighting.channel_switch import (
+    allowed_chars_per_type,
+    is_fixed_value,
+    split_fixed_edges,
+)
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +85,11 @@ def compute_dmx_footprint(device: dict) -> tuple[int, int]:
     width = compute_channel_width(device.get(CONF_DEVICE_TYPE, "dimmer"),
                                   device.get(CONF_CHANNEL_SETUP))
     byte_size = CHANNEL_SIZE.get(device.get(CONF_CHANNEL_SIZE) or "8bit", (1, 1))[0]
+    setup = device.get(CONF_CHANNEL_SETUP)
+    if byte_size > 1 and device.get(CONF_DEVICE_TYPE) != "binary" and setup:
+        # Leading/trailing dummy channels are single 8-bit channels (see split_fixed_edges).
+        head, main, tail = split_fixed_edges(setup)
+        return start, start + len(head) + len(main) * byte_size + len(tail) - 1
     return start, start + width * byte_size - 1
 
 

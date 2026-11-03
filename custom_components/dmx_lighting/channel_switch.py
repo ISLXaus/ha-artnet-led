@@ -13,9 +13,9 @@ allowed_chars_per_type = {
     "binary": "",
     "dimmer": "d",
     "color_temp": "dcChHtT",
-    "rgb": "drRgGbBuUwW",
-    "rgbw": "drRgGbBuUwW",
-    "rgbww": "dcChHtTrRgGbBuU",
+    "rgb": "drRgGbBuUaAwW",
+    "rgbw": "drRgGbBuUaAwW",
+    "rgbww": "dcChHtTrRgGbBuUaA",
     "xy": "dxy"
 }
 
@@ -30,6 +30,39 @@ def validate(channel_setup: Union[str, list], type: str):
 def is_fixed_value(channel) -> bool:
     """True for a dummy channel: a fixed DMX value (0-255) instead of a light function."""
     return isinstance(channel, int) and not isinstance(channel, bool)
+
+
+def split_fixed_edges(channel_setup) -> tuple[list[int], list, list[int]]:
+    """Split a layout into (leading dummies, the rest, trailing dummies).
+
+    In 16-bit (and wider) fixtures the dummy channels at the start and end are sent
+    as plain 8-bit DMX channels: strobe, mode and macro channels are 8-bit on real
+    fixtures. Dummies between light channels keep the fixture's channel size.
+    A layout without any light channel is left whole.
+    """
+    entries = list(channel_setup or [])
+    if isinstance(channel_setup, str) or not any(not is_fixed_value(c) for c in entries):
+        return [], entries, []
+    start = 0
+    while is_fixed_value(entries[start]):
+        start += 1
+    end = len(entries)
+    while is_fixed_value(entries[end - 1]):
+        end -= 1
+    return entries[:start], entries[start:end], entries[end:]
+
+
+def amber_split(red: float, green: float, blue: float) -> tuple[float, float, float, float]:
+    """Move the amber part of a colour onto an amber channel.
+
+    Amber LEDs are about (255, 191, 0): as much of the colour as possible comes from
+    amber and the red/green left over makes up the rest. Returns (red, green, blue, amber).
+    """
+    amber = max(0.0, min(red, green / AMBER_GREEN))
+    return red - amber, green - amber * AMBER_GREEN, blue, amber
+
+
+AMBER_GREEN = 0.75  # amber's green share relative to its red
 
 
 def off_values(channel_setup, channel_size: int, width: int) -> list[int]:
@@ -58,7 +91,11 @@ def to_values(channel_setup: str, channel_size: int, is_on: bool = True, brightn
         elif cold_white != -1 and warm_white != -1 and color_temp_kelvin is None:
             color_temp_kelvin, _ = rgbww_to_color_temperature((red, green, blue, cold_white, warm_white), min_kelvin, max_kelvin)
 
-    max_color = max(1, max(red, green, blue, cold_white, warm_white))
+    amber = -1
+    if any(c in ("a", "A") for c in channel_setup if isinstance(c, str)) and min(red, green, blue) >= 0:
+        red, green, blue, amber = amber_split(red, green, blue)
+
+    max_color = max(1, max(red, green, blue, cold_white, warm_white, amber))
 
     # d = dimmer
     # r = red (scaled for brightness)
@@ -67,6 +104,8 @@ def to_values(channel_setup: str, channel_size: int, is_on: bool = True, brightn
     # G = green (not scaled)
     # b = blue (scaled for brightness)
     # B = blue (not scaled)
+    # a = amber (taken from the colour, scaled for brightness)
+    # A = amber (taken from the colour, not scaled)
     # w = white (automatically calculated, scaled for brightness)
     # W = white (automatically calculated, not scaled)
     # c = cool (scaled for brightness)
@@ -85,6 +124,8 @@ def to_values(channel_setup: str, channel_size: int, is_on: bool = True, brightn
         "G": lambda: is_on * green * 255 / max_color,
         "b": lambda: is_on * blue * brightness / max_color,
         "B": lambda: is_on * blue * 255 / max_color,
+        "a": lambda: is_on * amber * brightness / max_color,
+        "A": lambda: is_on * amber * 255 / max_color,
         "w": lambda: is_on * cold_white * brightness / max_color,
         "W": lambda: is_on * cold_white * 255 / max_color,
         "c": lambda: is_on * cold_white * brightness / max_color,

@@ -6,7 +6,7 @@ import {
   HomeAssistant,
   footprint,
   deviceColor,
-  byteSize,
+  channelIndexAt,
   channelRole,
   hasCustomSetup,
 } from './model';
@@ -91,7 +91,7 @@ export class DmxUniverseGrid extends LitElement {
       const heat = this._live && value !== undefined ? value / 255 : 0;
       const drop = this._dropTarget;
       const role = entry
-        ? channelRole(entry.device, Math.floor((ch - entry.device.channel) / byteSize(entry.device)))
+        ? channelRole(entry.device, channelIndexAt(entry.device, ch))
         : undefined;
       const showRole = !!role && hasCustomSetup(entry!.device);
       const inDropRange = drop && ch >= drop.first && ch <= drop.last;

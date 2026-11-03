@@ -64,7 +64,7 @@ The patch is stored in `.storage/dmx_lighting.patch`.
 Many fixtures have channels that aren't part of the light itself — a *mode*, *strobe*, *macro* or *fan* channel that has to sit at a particular value for the fixture to work. In the fixture dialog, tick **Custom channel layout** to build the fixture channel by channel:
 
 * **Light channels** (dimmer, red, green, blue, white, cool/warm white, color temp, hue, saturation, X/Y — whatever the fixture type supports) follow the light entity.
-* **Dummy channels** have an optional **label** (e.g. `Mode`, `Strobe`, up to 32 characters) and a **fixed value** from 0 to 255. That value is sent from the moment the patch is applied and held there — while the light is off, while it fades, and while its color or brightness changes. With 16-bit (or wider) channel sizes the value is the coarse byte, like the other channels.
+* **Dummy channels** have an optional **label** (e.g. `Mode`, `Strobe`, up to 32 characters) and a **fixed value** from 0 to 255. That value is sent from the moment the patch is applied and held there — while the light is off, while it fades, and while its color or brightness changes. With 16-bit (or wider) channel sizes, dummy channels at the **start or end** of the layout are single 8-bit channels (strobe and mode channels are 8-bit on real fixtures); a dummy between light channels takes the fixture's channel size, with the value as the coarse byte.
 
 Use ↑/↓ to put channels in the fixture's order and ✕ to remove one. The type still decides what kind of light entity you get (e.g. `rgb` with a Mode channel is an RGB light); a `dimmer` can also have dummy channels, and a `fixed` fixture is made only of dummy channels. `binary` fixtures are always a single channel.
 
@@ -81,6 +81,19 @@ In the patch (and its YAML export) a custom layout is the regular [`channel_setu
 ```
 
 `channel_labels` is only used by the panel.
+
+Example: a 13-channel 16-bit RGBAW fixture (Dimmer, Red, Green, Blue, Amber and White, each with a fine channel, then Strobe where 0–10 is open). Make it an `rgbw` fixture with channel size `16bit` and a dimmer channel, unscaled colours and a trailing Strobe dummy channel at 0. Amber is mixed automatically from the colour you pick:
+
+```yaml
+- channel: 1
+  name: batten_1
+  type: rgbw
+  channel_size: 16bit
+  channel_setup: [d, R, G, B, A, W, 0]
+  channel_labels: [null, null, null, null, null, null, Strobe]
+```
+
+It occupies channels 1–13, so the next one goes at 14.
 
 ### Backup / edit as YAML
 
@@ -299,6 +312,8 @@ _Staticly sets the green channel on 50% brightness_
 - `G` = green unscaled
 - `b` = blue, scaled for brightness
 - `B` = blue, unscaled
+- `a` = amber, scaled for brightness (`rgb`, `rgbw`, `rgbww`): as much of the colour as possible is made with amber (about 255, 191, 0) and the red/green left over is added on top — orange and yellow come mostly from amber, blue never does
+- `A` = amber, unscaled
 - `w` = white, scaled for brightness
 - `W` = white, unscaled
 - `u` = hue
